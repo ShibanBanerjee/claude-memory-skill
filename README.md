@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Claude Skills](https://img.shields.io/badge/Claude-Skill-blueviolet)](https://github.com/anthropics/skills)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-green)](https://supabase.com)
-[![Version](https://img.shields.io/badge/version-1.2.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 Claude's context window resets with every new conversation. This skill gives Claude a **persistent memory layer** — so your long-running projects, key decisions, and working context are never lost.
@@ -35,7 +35,9 @@ Claude Memory Skill
   3. Generates detailed summary (1,500-4,000 words)
   4. Extracts: decisions + WHY, open questions,
      instructions, entities, tags
-  5. Stores in YOUR Supabase database
+  5. If memory exists for this project → UPDATES it
+     If no memory exists → INSERTS new entry
+     One clean memory per project. No duplicates.
          |
          v
 Your Supabase Database (PostgreSQL + FTS + pgvector ready)
@@ -112,8 +114,7 @@ cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
 
 | Command | Action |
 |---|---|
-| `/mem [title]` | Save current conversation to memory |
-| `/mem update` | Update existing memory with new content |
+| `/mem [title]` | Save current conversation to memory. If a memory for this project already exists, updates it instead of creating a duplicate. |
 | `/mem list` | List all saved memories |
 | `/context [query]` | Search and restore by topic |
 | `/context id:[uuid]` | Retrieve specific memory by ID |
@@ -188,8 +189,8 @@ Your data never leaves your control. All memories are stored in your own Supabas
 - [x] Supabase MCP integration
 - [x] Local Python CLI
 - [x] Detailed storage with quality standards
+- [x] Upsert logic — one memory per project, no duplicates
 - [ ] pgvector semantic search
-- [ ] Auto-checkpoint every N messages
 - [ ] Memory merging across sessions
 - [ ] Team shared memories with RLS
 - [ ] Export to Markdown and Obsidian

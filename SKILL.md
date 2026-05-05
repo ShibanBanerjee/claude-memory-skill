@@ -1,3 +1,8 @@
+---
+name: persistent-memory
+description: Gives persistent, searchable memory across conversations using Supabase. Use /mem to save conversation context, /context to restore it, /mem list to see all memories.
+---
+
 # Claude Memory Skill — /mem and /context
 
 ## What This Skill Does
@@ -19,7 +24,7 @@ Gives Claude persistent, searchable memory across conversations using a Supabase
 
 ## /mem Command — Full Execution Protocol
 
-### Step 1: Check existing memories first
+### Step 1: Check existing memories first — UPSERT LOGIC
 Before generating a new memory, always check what is already stored:
 
 ```sql
@@ -27,7 +32,9 @@ SELECT id, title, project, created_at, jsonb_array_length(key_decisions) as deci
 FROM claude_memories ORDER BY created_at DESC LIMIT 10;
 ```
 
-This prevents duplication and tells you if an update is better than a new entry.
+**If a memory with the same `project` already exists:** UPDATE that row instead of inserting a new one. This keeps one clean memory per project — no duplicates. The updated memory must include everything from the previous version PLUS everything new from the current conversation. Nothing from the earlier memory should be lost.
+
+**If no memory exists for this project:** INSERT a new row as normal.
 
 ### Step 2: Generate the detailed memory — NO LOSSY COMPRESSION
 
@@ -81,6 +88,21 @@ The summary must contain ALL of the following:
 
 ### Step 4: Store via Supabase MCP (primary path)
 
+**If updating an existing memory** (same project found in Step 1):
+```sql
+UPDATE claude_memories SET
+  title = 'updated title here',
+  summary = 'full updated summary here',
+  tags = ARRAY['tag1','tag2','tag3'],
+  key_decisions = '["decision 1","decision 2"]'::jsonb,
+  open_questions = '["question 1","question 2"]'::jsonb,
+  entities = '{"people":[],"products":[]}'::jsonb,
+  token_count_est = 2000
+WHERE id = 'existing-memory-uuid-from-step-1'
+RETURNING id, title, updated_at;
+```
+
+**If creating a new memory** (no existing memory for this project):
 ```sql
 INSERT INTO claude_memories (
   title, project, conversation_url, summary, tags,
@@ -103,7 +125,7 @@ Fallback (user machine): `cat memory.json | python3 ~/mem.py store --title "..."
 ### Step 5: Confirm to user
 
 ```
-✅ Memory saved.
+✅ Memory saved. [UPDATED existing | NEW entry]
 Title: [title]
 Project: [project]
 Memory ID: [uuid]
@@ -113,6 +135,7 @@ Open questions: [N]
 Tags: [tags]
 
 Restore in any future session with: /context [topic]
+To continue with a fresh context window: start a new conversation and type /context [project].
 ```
 
 ---

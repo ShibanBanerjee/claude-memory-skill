@@ -6,7 +6,7 @@
 ```
 /mem
 ```
-Saves the current conversation with an auto-generated title.
+Saves the current conversation with an auto-generated title. **If a memory for this project already exists, it updates that memory instead of creating a duplicate.** The updated memory includes everything from the previous version plus everything new from the current conversation — nothing is lost.
 
 ### With title
 ```
@@ -15,6 +15,13 @@ Saves the current conversation with an auto-generated title.
 /mem Auth Service — Design Complete
 ```
 Saves with the provided title. Be specific — the title is your primary way to find this memory later.
+
+### How upsert works
+When you run `/mem`, Claude first checks if a memory with the same `project` already exists:
+- **If yes:** Updates that row. The summary is regenerated to include both the previous context and the new conversation. All decisions, open questions, entities, and tags are merged. One clean memory per project.
+- **If no:** Creates a new entry as normal.
+
+This means you can run `/mem` multiple times across different conversations for the same project, and you'll always have one comprehensive, up-to-date memory — not a scattered trail of fragments.
 
 ### List all memories
 ```
@@ -127,7 +134,10 @@ cat my_memory.json | python3 ~/mem.py store --title "My Memory" --project "MyPro
 ## Tips
 
 **Checkpoint regularly in long sessions**
-In a 2-hour brainstorm, run `/mem` every 30–45 minutes. Each checkpoint captures the work so far. If the session ends unexpectedly, nothing is lost.
+In a 2-hour brainstorm, run `/mem` every 30–45 minutes. Each `/mem` updates the existing memory for the project — so you always have one clean, comprehensive snapshot, not scattered fragments. If the session ends unexpectedly, nothing is lost.
+
+**Start fresh when the context window gets heavy**
+After running `/mem`, start a new conversation and type `/context [project]`. Claude restores from a dense 3,000–4,000 word summary instead of a bloated 50,000+ word raw transcript. Much better use of the context window.
 
 **Be specific with titles**
 `/mem` → "Conversation 2026-05-05" (hard to find later)  
