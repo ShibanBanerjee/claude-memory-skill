@@ -1,24 +1,27 @@
 # 🧠 Claude Memory Skill
 
-> **Persistent, searchable, long-term memory for Claude — stored in your own database.**
+> **Persistent, searchable memory for Claude — stored locally on your machine.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Claude Skills](https://img.shields.io/badge/Claude-Skill-blueviolet)](https://github.com/anthropics/skills)
-[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-green)](https://supabase.com)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue)](CHANGELOG.md)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org)
+[![SQLite](https://img.shields.io/badge/Storage-SQLite-green)](https://sqlite.org)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 Claude's context window resets with every new conversation. This skill gives Claude a **persistent memory layer** — so your long-running projects, key decisions, and working context are never lost.
 
 **Type `/mem` to save. Type `/context` to restore.**
 
+No accounts. No configuration. No external services. Everything stays on your machine.
+
 ---
 
 ## The Problem This Solves
 
-You spend 3 hours in a deep product brainstorm with Claude. 15 critical decisions. 4 frameworks applied. A full strategy mapped with nuance that took hours to develop. Then you open a new conversation — and Claude knows nothing.
+You spend three hours in a deep product brainstorm with Claude. Fifteen critical decisions. Four frameworks applied. A full strategy mapped with nuance that took hours to develop. Then you open a new conversation — and Claude knows nothing.
 
-Claude Memory fixes this. One command saves everything. One command restores it in any future session, on any device, in any conversation.
+Claude Memory fixes this. One command saves everything. One command restores it in any future session, in any conversation.
 
 ---
 
@@ -27,21 +30,21 @@ Claude Memory fixes this. One command saves everything. One command restores it 
 ```
 Your Conversation (hours of work)
          |
-         |  /mem "Project Name"
+         |  /mem "My Project"
          v
 Claude Memory Skill
   1. Checks existing memories for this project
-  2. Reads the ENTIRE conversation from start
-  3. Generates detailed summary (1,500-4,000 words)
-  4. Extracts: decisions + WHY, open questions,
-     instructions, entities, tags
+  2. Reads the ENTIRE conversation from start to finish
+  3. Generates detailed summary (1,500–4,000 words)
+  4. Extracts: decisions + WHY, rejected ideas,
+     open questions, entities, tags
   5. If memory exists for this project → UPDATES it
      If no memory exists → INSERTS new entry
      One clean memory per project. No duplicates.
          |
          v
-Your Supabase Database (PostgreSQL + FTS + pgvector ready)
-Your data. Your database. Your control.
+~/.claude_memory.db  (SQLite — on your machine)
+Your data. Your machine. Your control.
          |
          |  New conversation, any time later
          |  /context "project name"
@@ -55,58 +58,50 @@ Claude, fully restored
 
 ## Quick Start
 
-### 1. Set up Supabase (5 minutes)
+**Requires: Python 3.8+** — no additional packages, no pip installs, nothing beyond what Python ships with.
 
-Create a free project at supabase.com, open the SQL Editor, and run `scripts/schema.sql`.
-
-### 2. Configure credentials
-
-**Mac/Linux:**
-```bash
-cat > ~/.claude_memory_config.json << 'EOF'
-{
-  "supabase_url": "https://YOUR_PROJECT_ID.supabase.co",
-  "supabase_anon_key": "YOUR_LEGACY_ANON_KEY"
-}
-EOF
-```
-
-**Windows PowerShell:**
-```powershell
-@'
-{
-  "supabase_url": "https://YOUR_PROJECT_ID.supabase.co",
-  "supabase_anon_key": "YOUR_LEGACY_ANON_KEY"
-}
-'@ | Out-File -FilePath "$env:USERPROFILE\.claude_memory_config.json" -Encoding utf8
-```
-
-Get your key from: Supabase Dashboard -> Settings -> API Keys -> Legacy anon tab.
-
-### 3. Install the Python helper
+### 1. Install the Python helper
 
 ```bash
-pip install requests --break-system-packages
+# Mac / Linux
 cp scripts/mem.py ~/mem.py
+
+# Windows PowerShell
+Copy-Item scripts\mem.py "$env:USERPROFILE\mem.py"
+```
+
+### 2. Install the skill
+
+**Claude Code:**
+```bash
+mkdir -p ~/.claude/skills/claude-memory
+cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
+```
+
+**Claude.ai:** Settings → Skills → Upload Custom Skill → select `SKILL.md`
+
+### 3. Verify
+
+```bash
 python3 ~/mem.py setup
 ```
 
-### 4. Install the skill
-
-```bash
-# Claude Code
-cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
-
-# Claude.ai — upload via Settings -> Skills -> Upload Custom Skill
+Expected output:
+```
+✅ Claude Memory — local database ready
+   Location: /home/you/.claude_memory.db
+   Memories stored: 0
 ```
 
-### 5. Use it
+### 4. Use it
 
 ```
-/mem "My Project"          # Save current conversation
-/context my project        # Restore in any future session
-/mem list                  # Browse all memories
+/mem "My Project"      # Save current conversation
+/context my project    # Restore in any future session
+/mem list              # Browse all saved memories
 ```
+
+The database is created automatically on first use. There is nothing else to configure.
 
 ---
 
@@ -118,7 +113,7 @@ cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
 | `/mem list` | List all saved memories |
 | `/context [query]` | Search and restore by topic |
 | `/context id:[uuid]` | Retrieve specific memory by ID |
-| `/recall [query]` | Alias for /context |
+| `/recall [query]` | Alias for `/context` |
 
 ---
 
@@ -126,14 +121,13 @@ cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
 
 Claude Memory captures everything that matters — not a compressed summary that loses nuance, but a complete detailed record:
 
-- **Summary** (1,500-4,000 words): Full narrative of everything discussed
+- **Summary** (1,500–4,000 words): Full narrative of everything discussed
 - **Key decisions**: What was decided, WHY, and what was REJECTED with reasons
 - **Open questions**: Specific, actionable next steps
-- **Instructions**: Your preferences and directives to Claude
 - **Entities**: All named people, products, companies, tools, documents
 - **Tags**: Auto-extracted for searchability
 
-Most memory tools compress aggressively. We do not. A decision without its reasoning is half-useless. A rejected option without its rejection reason is actively dangerous — future Claude might re-propose it. A few hundred extra words in the database costs nothing. A lost decision costs everything.
+Most memory tools compress aggressively. This one does not. A decision without its reasoning is half-useless. A rejected option without its rejection reason is actively dangerous — future Claude might re-propose it. A few hundred extra words in the database costs nothing. A lost decision costs everything.
 
 ---
 
@@ -143,57 +137,59 @@ Most memory tools compress aggressively. We do not. A decision without its reaso
 claude-memory-skill/
 ├── SKILL.md                    Core skill — Claude reads this
 ├── scripts/
-│   ├── mem.py                  Python CLI helper
-│   ├── schema.sql              Supabase database schema
-│   ├── schema_pgvector.sql     Optional semantic search
-│   └── migrate_v1_v2.sql       Migration scripts
+│   ├── mem.py                  Python CLI helper (copy to ~/mem.py)
+│   ├── schema.sql              SQLite schema reference
+│   └── verify.py               Checks your installation
 ├── references/
 │   ├── STORAGE_SPEC.md         Storage field specifications
 │   ├── RETRIEVAL_SPEC.md       Retrieval and ranking logic
-│   ├── QUALITY_RUBRIC.md       Good vs bad memory standards
-│   └── MCP_REFERENCE.md        Supabase MCP reference
+│   └── QUALITY_RUBRIC.md       Good vs bad memory standards
 ├── examples/
 │   ├── example_memory.json     Sample stored memory
 │   ├── example_retrieval.md    Sample retrieval session
 │   └── example_workflow.md     End-to-end walkthrough
 ├── tests/
-│   ├── test_connection.py      Test Supabase connectivity
+│   ├── run_all_tests.py        Test runner
+│   ├── test_connection.py      Test SQLite connectivity
 │   ├── test_storage.py         Test write and read
-│   ├── test_search.py          Test FTS quality
-│   └── test_quality.py         Validate memory standards
-├── docs/
-│   ├── SETUP.md                Detailed setup guide
-│   ├── WINDOWS.md              Windows-specific instructions
-│   ├── ADVANCED.md             pgvector and advanced config
-│   ├── TROUBLESHOOTING.md      Common issues and fixes
-│   └── API_REFERENCE.md        Full schema and API docs
-└── .github/
-    ├── workflows/
-    │   └── validate-skill.yml  CI validation
-    └── ISSUE_TEMPLATE/
-        ├── bug_report.md
-        └── feature_request.md
+│   └── test_search.py          Test FTS5 search quality
+└── docs/
+    ├── SETUP.md                Detailed setup guide
+    ├── WINDOWS.md              Windows-specific instructions
+    ├── ADVANCED.md             Advanced configuration
+    ├── TROUBLESHOOTING.md      Common issues and fixes
+    └── API_REFERENCE.md        CLI and schema reference
 ```
+
+**Storage:** All memories are stored in `~/.claude_memory.db` — a single SQLite file on your local machine. The database is created automatically on first use. Full-text search is powered by SQLite's built-in FTS5 engine, with triggers that keep the search index in sync on every write.
 
 ---
 
 ## Data Privacy
 
-Your data never leaves your control. All memories are stored in your own Supabase database. No data is sent to any third-party service. You can delete any memory at any time. Self-host Supabase for complete air-gap privacy.
+Your data never leaves your machine. All memories are stored in a local SQLite database. No data is sent to any external service. You can delete any memory or the entire database at any time.
+
+**Back up your memories:**
+```bash
+cp ~/.claude_memory.db ~/claude_memory_backup.db
+```
+
+**Export all memories as JSON:**
+```bash
+python3 ~/mem.py list --limit 10000
+```
 
 ---
 
 ## Roadmap
 
-- [x] Full-text search (PostgreSQL FTS)
-- [x] Supabase MCP integration
-- [x] Local Python CLI
-- [x] Detailed storage with quality standards
+- [x] Full-text search (SQLite FTS5)
+- [x] Local SQLite storage — zero setup, no accounts
 - [x] Upsert logic — one memory per project, no duplicates
-- [ ] pgvector semantic search
-- [ ] Memory merging across sessions
-- [ ] Team shared memories with RLS
+- [x] Detailed storage with quality standards
+- [ ] Semantic search with local embeddings
 - [ ] Export to Markdown and Obsidian
+- [ ] Memory merging across projects
 
 ---
 

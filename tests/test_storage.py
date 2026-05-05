@@ -1,50 +1,77 @@
 #!/usr/bin/env python3
-"""Test write and read operations."""
-import sys, json, uuid
+"""Test write, read, and delete operations against the local SQLite database."""
+import sys
+import json
+import uuid
+import sqlite3
 from pathlib import Path
+from datetime import datetime, timezone
+
+DB_PATH = Path.home() / ".claude_memory.db"
 
 def test_storage():
-    try:
-        import requests
-    except ImportError:
-        print("FAIL: requests not installed"); return False
+    test_id = str(uuid.uuid4())
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    cfg = json.loads((Path.home() / ".claude_memory_config.json").read_text())
-    key = cfg["supabase_anon_key"]
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Prefer": "return=representation"}
-    if not key.startswith("sb_"): headers["apikey"] = key
-    base = cfg["supabase_url"].rstrip("/") + "/rest/v1"
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA journal_mode=WAL")
+    except Exception as e:
+        print(f"FAIL: Could not connect to database at {DB_PATH}: {e}")
+        return False
 
     # Write
-    test_id = str(uuid.uuid4())
-    payload = {
-        "title": f"TEST_{test_id[:8]}",
-        "project": "_test",
-        "summary": "This is a test memory entry created by the test suite. It should be deleted automatically.",
-        "tags": ["_test", "automated"],
-        "key_decisions": ["This is a test — no real decision"],
-        "open_questions": ["Delete this test entry"],
-        "token_count_est": 30
-    }
-    r = requests.post(f"{base}/claude_memories", headers=headers, json=payload, timeout=15)
-    if r.status_code not in (200, 201):
-        print(f"FAIL write: {r.status_code} — {r.text}"); return False
-
-    mem_id = r.json()[0]["id"]
-    print(f"PASS: Write succeeded — ID: {mem_id}")
+    try:
+        db.execute(
+            "INSERT INTO claude_memories "
+            "(id, created_at, updated_at, title, project, conversation_url, "
+            " summary, key_decisions, open_questions, entities, tags, token_count_est) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                test_id, ts, ts,
+                f"TEST_{test_id[:8]}",
+                "_test",
+                "",
+                "This is a test memory entry created by the test suite. It will be deleted.",
+                '["Test decision — no real decision made"]',
+                '["Delete this test entry"]',
+                "{}",
+                '["_test", "automated"]',
+                12,
+            )
+        )
+        db.commit()
+        print(f"PASS: Write succeeded — ID: {test_id[:8]}")
+    except Exception as e:
+        print(f"FAIL write: {e}")
+        db.close()
+        return False
 
     # Read back
-    r = requests.get(f"{base}/claude_memories", headers=headers, params={"id": f"eq.{mem_id}"}, timeout=10)
-    if r.status_code != 200 or not r.json():
-        print("FAIL: Read failed"); return False
-    print("PASS: Read succeeded")
+    try:
+        row = db.execute(
+            "SELECT id, title FROM claude_memories WHERE id = ?", (test_id,)
+        ).fetchone()
+        if not row:
+            print("FAIL: Read returned no results")
+            db.close()
+            return False
+        print(f"PASS: Read succeeded — title: {row['title']}")
+    except Exception as e:
+        print(f"FAIL read: {e}")
+        db.close()
+        return False
 
     # Delete
-    r = requests.delete(f"{base}/claude_memories", headers=headers, params={"id": f"eq.{mem_id}"}, timeout=10)
-    if r.status_code in (200, 204):
+    try:
+        db.execute("DELETE FROM claude_memories WHERE id = ?", (test_id,))
+        db.commit()
         print("PASS: Delete succeeded — test data cleaned up")
-        return True
-    print(f"WARN: Delete returned {r.status_code} — manual cleanup may be needed")
+    except Exception as e:
+        print(f"WARN: Delete failed ({e}) — manual cleanup may be needed for ID {test_id[:8]}")
+
+    db.close()
     return True
 
 if __name__ == "__main__":

@@ -1,308 +1,356 @@
 #!/usr/bin/env python3
 """
-Claude Memory Skill — mem.py v1.2.0
-Local CLI helper for storing and retrieving Claude memories via Supabase REST API.
+Claude Memory Helper — mem.py
+Stores and retrieves conversation memories in a local SQLite database.
+Zero external dependencies — uses Python standard library only.
 
 Usage:
-  python3 mem.py setup                    Test connection
-  python3 mem.py store --title "..." --project "..."   Store (reads JSON from stdin)
-  python3 mem.py search --query "..."     Full-text search
-  python3 mem.py list [--project "..."]   List recent memories
-  python3 mem.py get --id "uuid"          Get single memory by ID
-  python3 mem.py delete --id "uuid"       Delete a memory
-
-Config file: ~/.claude_memory_config.json
-  { "supabase_url": "...", "supabase_anon_key": "..." }
+  python3 mem.py setup                                     init db and print status
+  python3 mem.py check  --project "name"                   check if project memory exists
+  python3 mem.py store                                     read JSON from stdin, insert new record
+  python3 mem.py update --id UUID                          read JSON from stdin, update record
+  python3 mem.py search --query "terms" [--project P] [--limit N]
+  python3 mem.py list   [--project "name"] [--limit N]
+  python3 mem.py get    --id UUID
 """
 
-import sys, os, json, re, argparse
+import sys
+import json
+import argparse
+import sqlite3
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-try:
-    import requests
-except ImportError:
-    print("ERROR: requests not installed.")
-    print("Run: pip install requests --break-system-packages")
-    sys.exit(1)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8-sig")
 
-CONFIG_PATH = Path.home() / ".claude_memory_config.json"
-VERSION = "1.2.0"
+DB_PATH = Path.home() / ".claude_memory.db"
 
-# ── Config ────────────────────────────────────────────────────────────────────
-def load_config():
-    if not CONFIG_PATH.exists():
-        print(f"""
-ERROR: Config file not found.
+# ── Schema ───────────────────────────────────────────────────────────────────
 
-Create it at: {CONFIG_PATH}
-{{
-  "supabase_url": "https://YOUR_PROJECT.supabase.co",
-  "supabase_anon_key": "eyJhbGci..."
-}}
+SCHEMA = """
+PRAGMA journal_mode=WAL;
 
-Get your legacy anon key from:
-Supabase Dashboard → Settings → API Keys → Legacy anon tab
-""")
-        sys.exit(1)
-    try:
-        return json.loads(CONFIG_PATH.read_text())
-    except json.JSONDecodeError as e:
-        print(f"ERROR: Invalid JSON in config file: {e}")
-        sys.exit(1)
+CREATE TABLE IF NOT EXISTS claude_memories (
+    id               TEXT PRIMARY KEY,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    project          TEXT NOT NULL DEFAULT '',
+    conversation_url TEXT NOT NULL DEFAULT '',
+    summary          TEXT NOT NULL,
+    key_decisions    TEXT NOT NULL DEFAULT '[]',
+    open_questions   TEXT NOT NULL DEFAULT '[]',
+    entities         TEXT NOT NULL DEFAULT '{}',
+    tags             TEXT NOT NULL DEFAULT '[]',
+    token_count_est  INTEGER NOT NULL DEFAULT 0
+);
 
-def headers(cfg):
-    key = cfg["supabase_anon_key"]
-    h = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation"
-    }
-    if not key.startswith("sb_"):
-        h["apikey"] = key
-    return h
+CREATE VIRTUAL TABLE IF NOT EXISTS claude_memories_fts
+USING fts5(
+    title, project, summary, tags,
+    content='claude_memories',
+    content_rowid='rowid'
+);
 
-def base_url(cfg):
-    return cfg["supabase_url"].rstrip("/") + "/rest/v1"
+CREATE TRIGGER IF NOT EXISTS memories_ai
+AFTER INSERT ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(rowid, title, project, summary, tags)
+    VALUES (new.rowid, new.title, new.project, new.summary, new.tags);
+END;
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
-def cmd_setup(args, cfg):
-    print(f"Claude Memory Skill v{VERSION}")
-    print(f"Config: {CONFIG_PATH}")
-    print(f"URL: {cfg['supabase_url']}")
-    print("Testing connection...")
-    try:
-        r = requests.get(
-            f"{base_url(cfg)}/claude_memories",
-            headers=headers(cfg),
-            params={"select": "count", "limit": "1"},
-            timeout=10
-        )
-        if r.status_code == 200:
-            count_r = requests.get(
-                f"{base_url(cfg)}/claude_memories",
-                headers={**headers(cfg), "Prefer": "count=exact"},
-                params={"select": "id"},
-                timeout=10
-            )
-            total = count_r.headers.get("content-range", "?/?").split("/")[-1]
-            print(f"Connected to Supabase successfully.")
-            print(f"Table: claude_memories — {total} memories stored.")
-        else:
-            print(f"Connection failed: {r.status_code} — {r.text}")
-            print("Make sure you have run scripts/schema.sql in your Supabase SQL editor.")
-    except requests.exceptions.ConnectionError:
-        print("Connection error — check your Supabase URL.")
-    except requests.exceptions.Timeout:
-        print("Connection timed out — check your internet connection.")
+CREATE TRIGGER IF NOT EXISTS memories_au
+AFTER UPDATE ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(claude_memories_fts, rowid, title, project, summary, tags)
+    VALUES ('delete', old.rowid, old.title, old.project, old.summary, old.tags);
+    INSERT INTO claude_memories_fts(rowid, title, project, summary, tags)
+    VALUES (new.rowid, new.title, new.project, new.summary, new.tags);
+END;
 
-# ── Store ─────────────────────────────────────────────────────────────────────
-def cmd_store(args, cfg):
+CREATE TRIGGER IF NOT EXISTS memories_ad
+AFTER DELETE ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(claude_memories_fts, rowid, title, project, summary, tags)
+    VALUES ('delete', old.rowid, old.title, old.project, old.summary, old.tags);
+END;
+"""
+
+# ── DB helpers ───────────────────────────────────────────────────────────────
+
+def connect():
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    return db
+
+def init_db(db):
+    db.executescript(SCHEMA)
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def new_id():
+    return str(uuid.uuid4())
+
+def deserialize(row):
+    d = dict(row)
+    for field in ("key_decisions", "open_questions", "entities", "tags"):
+        if field in d and isinstance(d[field], str):
+            try:
+                d[field] = json.loads(d[field])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return d
+
+def read_memory_json():
     raw = sys.stdin.read().strip()
-    if not raw:
-        print("ERROR: No JSON received on stdin.")
-        print("Usage: echo '{...}' | python3 mem.py store --title '...'")
-        sys.exit(1)
     try:
-        memory = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"ERROR: Invalid JSON: {e}")
+        print(f"ERROR: Invalid JSON from stdin: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if args.title:   memory["title"]   = args.title
-    if args.project: memory["project"] = args.project
-    if args.conv_url:memory["conversation_url"] = args.conv_url
+def word_count(text):
+    return len(text.split()) if text else 0
 
-    for field in ["title", "summary"]:
+def serialize_field(value, default):
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return json.dumps(default, ensure_ascii=False)
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+def cmd_setup(args):
+    db = connect()
+    init_db(db)
+    count = db.execute("SELECT COUNT(*) FROM claude_memories").fetchone()[0]
+    print("✅ Claude Memory — local database ready")
+    print(f"   Location: {DB_PATH}")
+    print(f"   Memories stored: {count}")
+    db.close()
+
+
+def cmd_check(args):
+    db = connect()
+    init_db(db)
+    row = db.execute(
+        "SELECT id, title, created_at, updated_at "
+        "FROM claude_memories WHERE project = ? "
+        "ORDER BY updated_at DESC LIMIT 1",
+        (args.project,)
+    ).fetchone()
+    db.close()
+    if row:
+        print(json.dumps({
+            "exists": True,
+            "id": row["id"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }, indent=2))
+    else:
+        print(json.dumps({"exists": False}))
+
+
+def cmd_store(args):
+    memory = read_memory_json()
+    for field in ("title", "summary"):
         if not memory.get(field):
-            print(f"ERROR: Memory must include '{field}' field.")
+            print(f"ERROR: Memory JSON must include '{field}'", file=sys.stderr)
             sys.exit(1)
 
-    memory["token_count_est"] = len(memory.get("summary", "").split())
-
-    r = requests.post(
-        f"{base_url(cfg)}/claude_memories",
-        headers=headers(cfg),
-        json=memory,
-        timeout=20
+    db = connect()
+    init_db(db)
+    mem_id = new_id()
+    ts = now_iso()
+    db.execute(
+        "INSERT INTO claude_memories "
+        "(id, created_at, updated_at, title, project, conversation_url, "
+        " summary, key_decisions, open_questions, entities, tags, token_count_est) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            mem_id, ts, ts,
+            memory.get("title", ""),
+            memory.get("project", ""),
+            memory.get("conversation_url", ""),
+            memory.get("summary", ""),
+            serialize_field(memory.get("key_decisions", []), []),
+            serialize_field(memory.get("open_questions", []), []),
+            serialize_field(memory.get("entities", {}), {}),
+            serialize_field(memory.get("tags", []), []),
+            word_count(memory.get("summary", "")),
+        )
     )
-    if r.status_code not in (200, 201):
-        print(f"ERROR {r.status_code}: {r.text}")
+    db.commit()
+    db.close()
+    print(json.dumps({
+        "status": "stored",
+        "id": mem_id,
+        "title": memory["title"],
+        "created_at": ts,
+    }, indent=2))
+
+
+def cmd_update(args):
+    memory = read_memory_json()
+    db = connect()
+    init_db(db)
+    ts = now_iso()
+    db.execute(
+        "UPDATE claude_memories SET "
+        "updated_at=?, title=?, project=?, conversation_url=?, "
+        "summary=?, key_decisions=?, open_questions=?, entities=?, tags=?, token_count_est=? "
+        "WHERE id=?",
+        (
+            ts,
+            memory.get("title", ""),
+            memory.get("project", ""),
+            memory.get("conversation_url", ""),
+            memory.get("summary", ""),
+            serialize_field(memory.get("key_decisions", []), []),
+            serialize_field(memory.get("open_questions", []), []),
+            serialize_field(memory.get("entities", {}), {}),
+            serialize_field(memory.get("tags", []), []),
+            word_count(memory.get("summary", "")),
+            args.id,
+        )
+    )
+    db.commit()
+    changed = db.execute("SELECT changes()").fetchone()[0]
+    db.close()
+    if changed == 0:
+        print(json.dumps({"status": "not_found", "id": args.id}))
+        sys.exit(1)
+    print(json.dumps({
+        "status": "updated",
+        "id": args.id,
+        "title": memory.get("title", ""),
+        "updated_at": ts,
+    }, indent=2))
+
+
+def cmd_search(args):
+    query = args.query.strip()
+    if not query:
+        print("ERROR: --query is required", file=sys.stderr)
         sys.exit(1)
 
-    result = r.json()
-    if isinstance(result, list): result = result[0]
-    decisions = len(memory.get("key_decisions", []))
-    questions = len(memory.get("open_questions", []))
-    words = memory["token_count_est"]
+    db = connect()
+    init_db(db)
 
-    print(f"""
-Memory saved successfully.
-
-  ID:        {result.get('id')}
-  Title:     {result.get('title')}
-  Project:   {memory.get('project', 'unset')}
-  Summary:   ~{words} words
-  Decisions: {decisions}
-  Questions: {questions}
-  Saved at:  {result.get('created_at', '')[:19]}
-
-Use /context {memory.get('project', memory.get('title', ''))} to restore in any future session.
-""")
-
-# ── Search ────────────────────────────────────────────────────────────────────
-def cmd_search(args, cfg):
-    if not args.query:
-        print("ERROR: --query required")
-        sys.exit(1)
-
-    ts_query = " & ".join(re.sub(r'[^\w\s]', '', args.query).split())
-    params = {
-        "select": "id,created_at,title,project,tags,summary,key_decisions,open_questions,conversation_url",
-        "search_vector": f"fts.{ts_query}",
-        "order": "created_at.desc",
-        "limit": str(args.limit or 5),
-    }
+    fts_query = query.replace('"', '""')
+    sql = (
+        "SELECT * FROM claude_memories "
+        "WHERE rowid IN ("
+        "  SELECT rowid FROM claude_memories_fts WHERE claude_memories_fts MATCH ?"
+        ")"
+    )
+    params = [fts_query]
     if args.project:
-        params["project"] = f"ilike.*{args.project}*"
+        sql += " AND project = ?"
+        params.append(args.project)
+    sql += " ORDER BY updated_at DESC LIMIT ?"
+    params.append(args.limit)
 
-    r = requests.get(f"{base_url(cfg)}/claude_memories", headers=headers(cfg), params=params, timeout=15)
-    if r.status_code != 200:
-        print(f"ERROR {r.status_code}: {r.text}")
-        sys.exit(1)
+    rows = db.execute(sql, params).fetchall()
 
-    results = r.json()
-    if not results:
-        print(f"No memories found for: '{args.query}'")
-        print("Try broader search terms or use: python3 mem.py list")
+    if not rows:
+        like = f"%{query}%"
+        fallback = (
+            "SELECT * FROM claude_memories "
+            "WHERE title LIKE ? OR project LIKE ? OR summary LIKE ?"
+        )
+        fallback_params = [like, like, like]
+        if args.project:
+            fallback += " AND project = ?"
+            fallback_params.append(args.project)
+        fallback += " ORDER BY updated_at DESC LIMIT ?"
+        fallback_params.append(args.limit)
+        rows = db.execute(fallback, fallback_params).fetchall()
+
+    db.close()
+
+    if not rows:
+        print(json.dumps({"status": "no_results", "query": query}))
         return
 
-    print(f"\nFound {len(results)} memory/memories for '{args.query}':\n")
-    for m in results:
-        print(f"  [{m['id'][:8]}...]  {m['title']}")
-        print(f"  Project: {m.get('project','—')}  |  Date: {m['created_at'][:10]}")
-        print(f"  Tags: {', '.join(m.get('tags', []))}")
-        print(f"  Decisions: {len(m.get('key_decisions',[]))}  |  Questions: {len(m.get('open_questions',[]))}")
-        print(f"  Preview: {m['summary'][:200]}...")
-        if m.get('conversation_url'):
-            print(f"  Link: {m['conversation_url']}")
-        print()
+    memories = [deserialize(r) for r in rows]
+    print(json.dumps({"status": "found", "count": len(memories), "memories": memories}, indent=2))
 
-    if args.json:
-        print("\n--- JSON ---")
-        print(json.dumps(results, indent=2))
 
-# ── List ──────────────────────────────────────────────────────────────────────
-def cmd_list(args, cfg):
-    params = {
-        "select": "id,created_at,title,project,tags,token_count_est",
-        "order": "created_at.desc",
-        "limit": str(args.limit or 20),
-    }
+def cmd_list(args):
+    db = connect()
+    init_db(db)
+    sql = (
+        "SELECT id, created_at, updated_at, title, project, tags, "
+        "token_count_est, conversation_url FROM claude_memories"
+    )
+    params = []
     if args.project:
-        params["project"] = f"ilike.*{args.project}*"
+        sql += " WHERE project = ?"
+        params.append(args.project)
+    sql += " ORDER BY updated_at DESC LIMIT ?"
+    params.append(args.limit)
+    rows = db.execute(sql, params).fetchall()
+    db.close()
+    memories = [deserialize(r) for r in rows]
+    print(json.dumps({"count": len(memories), "memories": memories}, indent=2))
 
-    r = requests.get(f"{base_url(cfg)}/claude_memories", headers=headers(cfg), params=params, timeout=15)
-    if r.status_code != 200:
-        print(f"ERROR {r.status_code}: {r.text}")
+
+def cmd_get(args):
+    db = connect()
+    init_db(db)
+    row = db.execute("SELECT * FROM claude_memories WHERE id = ?", (args.id,)).fetchone()
+    db.close()
+    if not row:
+        print(json.dumps({"status": "not_found", "id": args.id}))
         sys.exit(1)
+    print(json.dumps(deserialize(row), indent=2))
 
-    results = r.json()
-    if not results:
-        print("No memories stored yet. Use /mem to save your first memory.")
-        return
+# ── CLI ──────────────────────────────────────────────────────────────────────
 
-    print(f"\n{'Date':<12} {'ID':<12} {'Project':<15} {'Title':<45} {'Words'}")
-    print("-" * 95)
-    for m in results:
-        date = m['created_at'][:10]
-        mid  = m['id'][:8] + "..."
-        proj = (m.get('project') or '—')[:14]
-        title= m['title'][:44]
-        words= str(m.get('token_count_est') or '—')
-        print(f"{date:<12} {mid:<12} {proj:<15} {title:<45} {words}")
-    print()
-
-# ── Get ───────────────────────────────────────────────────────────────────────
-def cmd_get(args, cfg):
-    r = requests.get(
-        f"{base_url(cfg)}/claude_memories",
-        headers=headers(cfg),
-        params={"id": f"eq.{args.id}", "select": "*"},
-        timeout=15
-    )
-    if r.status_code != 200:
-        print(f"ERROR {r.status_code}: {r.text}")
-        sys.exit(1)
-    results = r.json()
-    if not results:
-        print(f"No memory found with ID: {args.id}")
-        return
-    print(json.dumps(results[0], indent=2))
-
-# ── Delete ────────────────────────────────────────────────────────────────────
-def cmd_delete(args, cfg):
-    confirm = input(f"Delete memory {args.id}? This cannot be undone. Type 'yes' to confirm: ")
-    if confirm.strip().lower() != 'yes':
-        print("Cancelled.")
-        return
-    r = requests.delete(
-        f"{base_url(cfg)}/claude_memories",
-        headers=headers(cfg),
-        params={"id": f"eq.{args.id}"},
-        timeout=15
-    )
-    if r.status_code in (200, 204):
-        print(f"Memory {args.id} deleted.")
-    else:
-        print(f"ERROR {r.status_code}: {r.text}")
-
-# ── CLI ───────────────────────────────────────────────────────────────────────
 def main():
-    p = argparse.ArgumentParser(
-        description=f"Claude Memory Skill CLI v{VERSION}",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python3 mem.py setup
-  python3 mem.py list
-  python3 mem.py search --query "my-project brainstorm"
-  python3 mem.py get --id "e1ccaea5-7cb2-4893-871b-cc83846e5c3e"
-  echo '{"title":"Test","summary":"..."}' | python3 mem.py store --project "MyProject"
-        """
-    )
+    p = argparse.ArgumentParser(description="Claude Memory Helper — local SQLite storage")
     sub = p.add_subparsers(dest="cmd")
 
-    sub.add_parser("setup", help="Test Supabase connection")
+    sub.add_parser("setup")
 
-    s = sub.add_parser("store", help="Store memory from stdin JSON")
-    s.add_argument("--title",    default="", help="Override title")
-    s.add_argument("--project",  default="", help="Override project")
-    s.add_argument("--conv-url", default="", help="Conversation URL")
+    s_check = sub.add_parser("check")
+    s_check.add_argument("--project", required=True)
 
-    s = sub.add_parser("search", help="Full-text search memories")
-    s.add_argument("--query",   required=True)
-    s.add_argument("--project", default="")
-    s.add_argument("--limit",   type=int, default=5)
-    s.add_argument("--json",    action="store_true", help="Also output raw JSON")
+    sub.add_parser("store")
 
-    s = sub.add_parser("list", help="List recent memories")
-    s.add_argument("--project", default="")
-    s.add_argument("--limit",   type=int, default=20)
+    s_update = sub.add_parser("update")
+    s_update.add_argument("--id", required=True)
 
-    s = sub.add_parser("get", help="Get full memory by ID")
-    s.add_argument("--id", required=True)
+    s_search = sub.add_parser("search")
+    s_search.add_argument("--query", required=True)
+    s_search.add_argument("--project", default="")
+    s_search.add_argument("--limit", type=int, default=5)
 
-    s = sub.add_parser("delete", help="Delete a memory by ID")
-    s.add_argument("--id", required=True)
+    s_list = sub.add_parser("list")
+    s_list.add_argument("--project", default="")
+    s_list.add_argument("--limit", type=int, default=20)
+
+    s_get = sub.add_parser("get")
+    s_get.add_argument("--id", required=True)
 
     args = p.parse_args()
     if not args.cmd:
         p.print_help()
-        sys.exit(0)
+        sys.exit(1)
 
-    cfg = load_config()
-    {"setup": cmd_setup, "store": cmd_store, "search": cmd_search,
-     "list": cmd_list, "get": cmd_get, "delete": cmd_delete}[args.cmd](args, cfg)
+    {
+        "setup":  cmd_setup,
+        "check":  cmd_check,
+        "store":  cmd_store,
+        "update": cmd_update,
+        "search": cmd_search,
+        "list":   cmd_list,
+        "get":    cmd_get,
+    }[args.cmd](args)
+
 
 if __name__ == "__main__":
     main()

@@ -1,12 +1,12 @@
 ---
 name: persistent-memory
-description: Gives persistent, searchable memory across conversations using Supabase. Use /mem to save conversation context, /context to restore it, /mem list to see all memories.
+description: Gives Claude persistent, searchable memory across conversations stored locally on your machine. Use /mem to save conversation context, /context to restore it, /mem list to see all memories.
 ---
 
 # Claude Memory Skill — /mem and /context
 
 ## What This Skill Does
-Gives Claude persistent, searchable memory across conversations using a Supabase PostgreSQL database.
+Gives Claude persistent, searchable memory across conversations. All data is stored in a local SQLite database on your machine — no accounts, no cloud services, no configuration required beyond copying two files.
 
 **Trigger words:**
 - `/mem` `/mem [title]` `/memory` `/remember this` — save conversation to memory
@@ -15,26 +15,31 @@ Gives Claude persistent, searchable memory across conversations using a Supabase
 
 ---
 
-## Configuration
-- **Supabase Project ID:** set in `~/.claude_memory_config.json`
-- **mem.py location:** `~/mem.py`
-- **Config file:** `~/.claude_memory_config.json`
-
----
-
 ## /mem Command — Full Execution Protocol
 
-### Step 1: Check existing memories first — UPSERT LOGIC
-Before generating a new memory, always check what is already stored:
+### Step 1: Check for existing memory — UPSERT LOGIC
 
-```sql
-SELECT id, title, project, created_at, jsonb_array_length(key_decisions) as decisions
-FROM claude_memories ORDER BY created_at DESC LIMIT 10;
+Derive a `project` slug from the conversation topic (lowercase, hyphen-separated, e.g. `backend-rewrite`, `my-startup`, `personal`). Then check whether a memory already exists for it:
+
+```bash
+python3 ~/mem.py check --project "project-slug"
 ```
 
-**If a memory with the same `project` already exists:** UPDATE that row instead of inserting a new one. This keeps one clean memory per project — no duplicates. The updated memory must include everything from the previous version PLUS everything new from the current conversation. Nothing from the earlier memory should be lost.
+Response when a memory exists:
+```json
+{"exists": true, "id": "uuid", "title": "...", "created_at": "...", "updated_at": "..."}
+```
 
-**If no memory exists for this project:** INSERT a new row as normal.
+Response when none exists:
+```json
+{"exists": false}
+```
+
+**If a memory exists for this project:** take the UPDATE path in Step 4. The updated memory must include everything from the previous version PLUS everything new from the current conversation — nothing from the earlier memory should be lost.
+
+**If no memory exists:** take the INSERT path in Step 4.
+
+---
 
 ### Step 2: Generate the detailed memory — NO LOSSY COMPRESSION
 
@@ -60,13 +65,15 @@ The summary must contain ALL of the following:
 - Omitting specific numbers → always include them
 - Omitting rejections → rejected ideas are as critical as accepted ones
 
+---
+
 ### Step 3: Structure the JSON
 
 ```json
 {
   "title": "Specific descriptive title (max 100 chars)",
-  "project": "Project or domain name e.g. backend-rewrite, my-startup, personal",
-  "conversation_url": "URL if known",
+  "project": "project-slug-matching-step-1",
+  "conversation_url": "URL if known, otherwise empty string",
   "tags": ["5 to 10 specific searchable tags"],
   "summary": "1500-4000 word detailed narrative — see Step 2",
   "key_decisions": [
@@ -86,41 +93,37 @@ The summary must contain ALL of the following:
 }
 ```
 
-### Step 4: Store via Supabase MCP (primary path)
+---
 
-**If updating an existing memory** (same project found in Step 1):
-```sql
-UPDATE claude_memories SET
-  title = 'updated title here',
-  summary = 'full updated summary here',
-  tags = ARRAY['tag1','tag2','tag3'],
-  key_decisions = '["decision 1","decision 2"]'::jsonb,
-  open_questions = '["question 1","question 2"]'::jsonb,
-  entities = '{"people":[],"products":[]}'::jsonb,
-  token_count_est = 2000
-WHERE id = 'existing-memory-uuid-from-step-1'
-RETURNING id, title, updated_at;
+### Step 4: Store via mem.py
+
+Pipe the JSON from Step 3 to mem.py using a heredoc to avoid shell quoting issues.
+
+**If creating a new memory** (Step 1 returned `"exists": false`):
+```bash
+python3 ~/mem.py store << 'MEMORY_JSON'
+{"title": "...", "project": "...", "summary": "...", "tags": [...], "key_decisions": [...], "open_questions": [...], "entities": {...}, "token_count_est": 0}
+MEMORY_JSON
 ```
 
-**If creating a new memory** (no existing memory for this project):
-```sql
-INSERT INTO claude_memories (
-  title, project, conversation_url, summary, tags,
-  key_decisions, open_questions, entities, token_count_est
-) VALUES (
-  'title here',
-  'project here',
-  'url or empty',
-  'full summary here',
-  ARRAY['tag1','tag2','tag3'],
-  '["decision 1","decision 2"]'::jsonb,
-  '["question 1","question 2"]'::jsonb,
-  '{"people":[],"products":[]}'::jsonb,
-  2000
-) RETURNING id, title, created_at;
+Response:
+```json
+{"status": "stored", "id": "new-uuid", "title": "...", "created_at": "..."}
 ```
 
-Fallback (user machine): `cat memory.json | python3 ~/mem.py store --title "..." --project "..."`
+**If updating an existing memory** (Step 1 returned `"exists": true` with an ID):
+```bash
+python3 ~/mem.py update --id "id-from-step-1" << 'MEMORY_JSON'
+{"title": "...", "project": "...", "summary": "...", "tags": [...], "key_decisions": [...], "open_questions": [...], "entities": {...}, "token_count_est": 0}
+MEMORY_JSON
+```
+
+Response:
+```json
+{"status": "updated", "id": "uuid", "title": "...", "updated_at": "..."}
+```
+
+---
 
 ### Step 5: Confirm to user
 
@@ -144,18 +147,22 @@ To continue with a fresh context window: start a new conversation and type /cont
 
 ### Step 1: Search
 
-Primary (MCP SQL):
-```sql
-SELECT id, title, project, tags, summary, key_decisions, open_questions, entities, conversation_url, created_at
-FROM claude_memories
-WHERE search_vector @@ plainto_tsquery('english', 'query terms here')
-ORDER BY created_at DESC LIMIT 5;
+```bash
+python3 ~/mem.py search --query "query terms here" --limit 5
 ```
 
-Fallback: `python3 ~/mem.py search --query "query" --limit 5`
+If no results, try broader terms:
+```bash
+python3 ~/mem.py search --query "broader term" --limit 5
+```
+
+If still no results, list all:
+```bash
+python3 ~/mem.py list --limit 20
+```
 
 ### Step 2: Present findings
-Show title, project, date, decision count, question count, first 200 chars of summary.
+Show title, project, date, decision count, question count, and first 200 chars of summary.
 
 ### Step 3: Load into working context
 - Treat summary as fully known background
@@ -164,18 +171,17 @@ Show title, project, date, decision count, question count, first 200 chars of su
 - Say clearly: "I have loaded the [project] context. [One sentence orientation]. Where would you like to resume?"
 
 ### Step 4: Multi-memory
-If multiple memories loaded: note dates (recent wins conflicts), synthesise, flag contradictions.
+If multiple memories are loaded: note dates (most recent wins on conflicts), synthesise, flag contradictions.
 
 ---
 
 ## /mem list
 
-```sql
-SELECT id, created_at::DATE as date, title, project, tags,
-  jsonb_array_length(key_decisions) as decisions,
-  jsonb_array_length(open_questions) as questions
-FROM claude_memories ORDER BY created_at DESC LIMIT 20;
+```bash
+python3 ~/mem.py list --limit 20
 ```
+
+Display results as a readable table: date, title, project, tags, word count.
 
 ---
 
@@ -196,7 +202,7 @@ A good memory lets future Claude:
 
 | Error | Action |
 |---|---|
-| Supabase MCP unavailable | Fall back to mem.py |
-| Connection 403 | Use legacy anon key (eyJ...), not publishable key (sb_...) |
-| No search results | Try tag match, then project match, then list all |
-| Memory very large | Split into Part 1/2 entries |
+| `python3: command not found` | User needs Python 3.8+. Direct them to python.org |
+| `No such file or directory: ~/mem.py` | User hasn't installed mem.py. Run: `cp scripts/mem.py ~/mem.py` |
+| `No search results` | Try simpler terms, then `/mem list` to browse all memories |
+| `ERROR: Invalid JSON` | Rebuild the JSON object carefully — check for unescaped quotes or special characters |

@@ -7,28 +7,29 @@ PRs and issues are welcome.
 - **Bug reports** — use the issue template; include OS, Python version, and the exact error
 - **Documentation** — corrections, clearer wording, additional examples
 - **New features** — open an issue to discuss before building; see the roadmap in README
-- **pgvector integration** — high priority; see `docs/ADVANCED.md` for context
+- **Semantic search** — high priority; see `docs/ADVANCED.md` for context
 
 ## Development setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/claude-memory-skill
+git clone https://github.com/ShibanBanerjee/claude-memory-skill
 cd claude-memory-skill
-pip install requests --break-system-packages
 cp scripts/mem.py ~/mem.py
+python3 ~/mem.py setup          # initialise the local database
 python3 scripts/verify.py       # check your environment
 python3 tests/run_all_tests.py  # run the test suite
 ```
 
-You'll need a Supabase project with `schema.sql` applied and a valid `~/.claude_memory_config.json`.
+No external accounts or credentials are required.
 
 ## Guidelines
 
 - `SKILL.md` must stay under ~6,000 words — Claude loads this in full on activation
-- SQL schema changes need a corresponding migration in `scripts/migrate_*.sql`
+- All storage goes through `mem.py` — keep the CLI interface consistent
+- `mem.py` must work with Python standard library only — no external dependencies
 - New features should include tests in `tests/`
+- Python must work on 3.8+
 - Update `CHANGELOG.md` under an `[Unreleased]` header
-- Python must work on 3.8+; avoid external dependencies beyond `requests`
 
 ## Submitting a PR
 

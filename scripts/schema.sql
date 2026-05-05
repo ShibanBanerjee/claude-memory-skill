@@ -1,68 +1,51 @@
--- Claude Memory Skill — Database Schema v1.2
--- Run this once in your Supabase SQL Editor before using the skill.
+-- Claude Memory Skill — SQLite Schema
+-- Applied automatically by mem.py on first run.
+-- This file is provided as a reference. You do not need to run it manually.
 
--- Table
+PRAGMA journal_mode=WAL;
+
 CREATE TABLE IF NOT EXISTS claude_memories (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ,
-  conversation_id  TEXT,
-  conversation_url TEXT,
-  title            TEXT NOT NULL,
-  project          TEXT,
-  summary          TEXT NOT NULL,
-  key_decisions    JSONB DEFAULT '[]'::jsonb,
-  open_questions   JSONB DEFAULT '[]'::jsonb,
-  instructions     JSONB DEFAULT '[]'::jsonb,
-  entities         JSONB DEFAULT '{}'::jsonb,
-  tags             TEXT[] DEFAULT '{}',
-  token_count_est  INTEGER,
-  search_vector    TSVECTOR
+    id               TEXT PRIMARY KEY,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    project          TEXT NOT NULL DEFAULT '',
+    conversation_url TEXT NOT NULL DEFAULT '',
+    summary          TEXT NOT NULL,
+    key_decisions    TEXT NOT NULL DEFAULT '[]',
+    open_questions   TEXT NOT NULL DEFAULT '[]',
+    entities         TEXT NOT NULL DEFAULT '{}',
+    tags             TEXT NOT NULL DEFAULT '[]',
+    token_count_est  INTEGER NOT NULL DEFAULT 0
 );
 
--- Auto-update search vector on insert/update
-CREATE OR REPLACE FUNCTION claude_memories_search_update()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.search_vector := to_tsvector('english',
-    COALESCE(NEW.title, '')    || ' ' ||
-    COALESCE(NEW.project, '')  || ' ' ||
-    COALESCE(NEW.summary, '')  || ' ' ||
-    COALESCE(array_to_string(NEW.tags, ' '), '')
-  );
-  NEW.updated_at := NOW();
-  RETURN NEW;
+-- Full-text search index across title, project, summary, and tags
+CREATE VIRTUAL TABLE IF NOT EXISTS claude_memories_fts
+USING fts5(
+    title, project, summary, tags,
+    content='claude_memories',
+    content_rowid='rowid'
+);
+
+-- Keep FTS in sync on insert
+CREATE TRIGGER IF NOT EXISTS memories_ai
+AFTER INSERT ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(rowid, title, project, summary, tags)
+    VALUES (new.rowid, new.title, new.project, new.summary, new.tags);
 END;
-$$ LANGUAGE plpgsql;
 
-CREATE TRIGGER claude_memories_search_trigger
-BEFORE INSERT OR UPDATE ON claude_memories
-FOR EACH ROW EXECUTE FUNCTION claude_memories_search_update();
+-- Keep FTS in sync on update
+CREATE TRIGGER IF NOT EXISTS memories_au
+AFTER UPDATE ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(claude_memories_fts, rowid, title, project, summary, tags)
+    VALUES ('delete', old.rowid, old.title, old.project, old.summary, old.tags);
+    INSERT INTO claude_memories_fts(rowid, title, project, summary, tags)
+    VALUES (new.rowid, new.title, new.project, new.summary, new.tags);
+END;
 
--- Indexes
-CREATE INDEX IF NOT EXISTS idx_memories_search   ON claude_memories USING GIN(search_vector);
-CREATE INDEX IF NOT EXISTS idx_memories_tags     ON claude_memories USING GIN(tags);
-CREATE INDEX IF NOT EXISTS idx_memories_project  ON claude_memories (project);
-CREATE INDEX IF NOT EXISTS idx_memories_created  ON claude_memories (created_at DESC);
-
--- RLS: enable with open policy for personal use
-ALTER TABLE claude_memories ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "allow_all_personal_use" ON claude_memories FOR ALL USING (true) WITH CHECK (true);
-
--- Convenience view
-CREATE OR REPLACE VIEW memory_cards AS
-SELECT
-  id,
-  created_at::DATE                    AS date,
-  updated_at::DATE                    AS last_updated,
-  title,
-  project,
-  tags,
-  LEFT(summary, 300) || '...'         AS preview,
-  jsonb_array_length(key_decisions)   AS decision_count,
-  jsonb_array_length(open_questions)  AS question_count,
-  jsonb_array_length(instructions)    AS instruction_count,
-  token_count_est,
-  conversation_url
-FROM claude_memories
-ORDER BY created_at DESC;
+-- Keep FTS in sync on delete
+CREATE TRIGGER IF NOT EXISTS memories_ad
+AFTER DELETE ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(claude_memories_fts, rowid, title, project, summary, tags)
+    VALUES ('delete', old.rowid, old.title, old.project, old.summary, old.tags);
+END;

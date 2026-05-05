@@ -19,6 +19,7 @@ labels: bug
 
 - OS: [e.g. Windows 11, macOS 14, Ubuntu 22.04]
 - Python version: [e.g. 3.11]
+- SQLite version: [run `python3 -c "import sqlite3; print(sqlite3.sqlite_version)"`]
 - Claude interface: [Claude.ai / Claude Code / API]
 - Skill version: [check CHANGELOG.md]
 
@@ -28,11 +29,8 @@ labels: bug
 paste error here
 ```
 
-## Config (remove your actual keys)
+## mem.py setup output
 
-```json
-{
-  "supabase_url": "https://xxx.supabase.co",
-  "supabase_anon_key": "[REDACTED]"
-}
+```
+paste the output of: python3 ~/mem.py setup
 ```

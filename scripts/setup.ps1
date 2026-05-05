@@ -10,68 +10,42 @@ Write-Host "╚═════════════════════�
 Write-Host ""
 
 # 1. Check Python
-Write-Host "[1/5] Checking Python..." -ForegroundColor Yellow
+Write-Host "[1/3] Checking Python..." -ForegroundColor Yellow
 try {
     $pythonVersion = python --version 2>&1
     Write-Host "✓ Found: $pythonVersion" -ForegroundColor Green
 } catch {
-    Write-Host "✗ Python not found. Install from https://python.org" -ForegroundColor Red
+    Write-Host "✗ Python not found. Install from https://python.org (check 'Add Python to PATH')" -ForegroundColor Red
     exit 1
 }
 
-# 2. Install requests
-Write-Host "[2/5] Installing Python dependencies..." -ForegroundColor Yellow
-python -m pip install requests -q
-Write-Host "✓ requests library installed" -ForegroundColor Green
-
-# 3. Copy mem.py
-Write-Host "[3/5] Installing mem.py..." -ForegroundColor Yellow
-Copy-Item -Path "mem.py" -Destination "$env:USERPROFILE\mem.py" -Force
-Write-Host "✓ mem.py installed to $env:USERPROFILE\mem.py" -ForegroundColor Green
-
-# 4. Create config if it doesn't exist
-Write-Host "[4/5] Checking config file..." -ForegroundColor Yellow
-$configPath = "$env:USERPROFILE\.claude_memory_config.json"
-if (Test-Path $configPath) {
-    Write-Host "✓ Config already exists at $configPath" -ForegroundColor Green
-} else {
-    Write-Host ""
-    Write-Host "Config file not found. Let's create it."
-    Write-Host "You'll need your Supabase project URL and anon key."
-    Write-Host "Find them at: Supabase Dashboard → Project Settings → API Keys → Legacy anon key"
-    Write-Host ""
-    $supabaseUrl = Read-Host "Supabase project URL (e.g. https://abc123.supabase.co)"
-    $supabaseKey = Read-Host "Supabase anon key (starts with eyJ...)"
-    
-    $config = @"
-{
-  "supabase_url": "$supabaseUrl",
-  "supabase_anon_key": "$supabaseKey"
+# 2. Install mem.py
+Write-Host "[2/3] Installing mem.py..." -ForegroundColor Yellow
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$memSrc = Join-Path $scriptDir "mem.py"
+if (-not (Test-Path $memSrc)) {
+    $memSrc = Join-Path (Split-Path -Parent $scriptDir) "mem.py"
 }
-"@
-    $config | Out-File -FilePath $configPath -Encoding utf8
-    Write-Host "✓ Config created at $configPath" -ForegroundColor Green
-}
+Copy-Item -Path $memSrc -Destination "$env:USERPROFILE\mem.py" -Force
+python "$env:USERPROFILE\mem.py" setup
+Write-Host "✓ mem.py installed and database initialised" -ForegroundColor Green
 
-# 5. Install SKILL.md
-Write-Host "[5/5] Installing Claude skill..." -ForegroundColor Yellow
-Write-Host "⚠ Copy SKILL.md manually to your Claude skills directory." -ForegroundColor Yellow
-Write-Host "  Typically: /mnt/skills/user/claude-memory/SKILL.md" -ForegroundColor Yellow
+# 3. Install SKILL.md
+Write-Host "[3/3] Installing Claude skill..." -ForegroundColor Yellow
+$skillDir = "$env:USERPROFILE\.claude\skills\claude-memory"
+New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
+$skillSrc = Join-Path (Split-Path -Parent $scriptDir) "SKILL.md"
+if (-not (Test-Path $skillSrc)) { $skillSrc = "SKILL.md" }
+Copy-Item -Path $skillSrc -Destination "$skillDir\SKILL.md" -Force
+Write-Host "✓ SKILL.md installed to $skillDir" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "════════════════════════════════════════" -ForegroundColor Blue
 Write-Host ""
-Write-Host "Next steps:"
+Write-Host "Setup complete. In any Claude conversation, type:"
 Write-Host ""
-Write-Host "  1. Run schema.sql in your Supabase SQL Editor"
-Write-Host "     (Supabase Dashboard → SQL Editor → paste schema.sql → Run)"
+Write-Host "  /mem      → save conversation to memory"
+Write-Host "  /context  → restore memory in future sessions"
 Write-Host ""
-Write-Host "  2. Test your connection:"
-Write-Host "     python $env:USERPROFILE\mem.py setup"
-Write-Host ""
-Write-Host "  3. In any Claude conversation, type:"
-Write-Host "     /mem      → save conversation to memory"
-Write-Host "     /context  → restore memory in future sessions"
-Write-Host ""
-Write-Host "Setup complete. See docs/ for full documentation." -ForegroundColor Green
+Write-Host "No further configuration required." -ForegroundColor Green
 Write-Host ""

@@ -1,72 +1,24 @@
 # Setup Guide
 
 ## Prerequisites
-- Python 3.8+
-- A Supabase account (free tier works)
+
+- Python 3.8+ — no additional packages required
 - Claude.ai Pro/Max/Team/Enterprise, or Claude Code
 
-## Step 1: Create Supabase Project
-1. Go to [supabase.com](https://supabase.com) and sign in
-2. Click "New Project"
-3. Choose a name (e.g. "claude-mem") and region close to you
-4. Note your project URL and API keys
+## Step 1: Install the Python helper
 
-## Step 2: Run the Schema
-1. In your Supabase dashboard, go to **SQL Editor → New Query**
-2. Copy the contents of `scripts/schema.sql`
-3. Paste and click **Run**
-4. You should see: "Success. No rows returned."
-
-## Step 3: Get Your API Key
-1. Go to **Settings → API Keys**
-2. Click the **"Legacy anon, service_role API keys"** tab
-3. Copy the `anon` key (the long JWT starting with `eyJ...`)
-
-> **Why legacy?** The new publishable key format (`sb_publishable_...`) requires
-> domain whitelisting and is designed for browser apps. For local scripts, the
-> legacy anon key is the correct choice.
-
-## Step 4: Create Config File
-
-**Mac/Linux:**
+**Mac / Linux:**
 ```bash
-cat > ~/.claude_memory_config.json << 'CONF'
-{
-  "supabase_url": "https://YOUR_PROJECT_ID.supabase.co",
-  "supabase_anon_key": "eyJhbGci..."
-}
-CONF
+cp scripts/mem.py ~/mem.py
+chmod +x ~/mem.py
 ```
 
 **Windows PowerShell:**
 ```powershell
-@'
-{
-  "supabase_url": "https://YOUR_PROJECT_ID.supabase.co",
-  "supabase_anon_key": "eyJhbGci..."
-}
-'@ | Out-File -FilePath "$env:USERPROFILE\.claude_memory_config.json" -Encoding utf8
+Copy-Item scripts\mem.py "$env:USERPROFILE\mem.py"
 ```
 
-## Step 5: Install Python Helper
-
-```bash
-pip install requests --break-system-packages
-cp scripts/mem.py ~/mem.py
-python3 ~/mem.py setup
-```
-
-Expected output:
-```
-Claude Memory Skill v1.2.0
-Config: /home/user/.claude_memory_config.json
-URL: https://your-project.supabase.co
-Testing connection...
-Connected to Supabase successfully.
-Table: claude_memories — 0 memories stored.
-```
-
-## Step 6: Install the Skill
+## Step 2: Install the skill
 
 **For Claude Code:**
 ```bash
@@ -75,19 +27,41 @@ cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
 ```
 
 **For Claude.ai:**
-Go to Settings → Skills → Upload Custom Skill → upload `SKILL.md`
+Settings → Skills → Upload Custom Skill → upload `SKILL.md`
 
-## Step 7: Test End to End
+## Step 3: Verify
+
+```bash
+python3 ~/mem.py setup
+```
+
+Expected output:
+```
+✅ Claude Memory — local database ready
+   Location: /home/you/.claude_memory.db
+   Memories stored: 0
+```
+
+The database at `~/.claude_memory.db` is created automatically on first use. There is nothing else to configure.
+
+## Step 4: Test end to end
 
 In a Claude conversation, type:
 ```
 /mem Test Memory
 ```
 
-Claude should generate a summary, store it, and confirm with a memory ID.
-Then in a new conversation:
+Claude generates a summary of the conversation and stores it. You'll receive a memory ID and a restore command. In a new conversation:
 ```
 /context test
 ```
 
-Claude should retrieve and display the saved memory.
+Claude retrieves and loads the saved memory.
+
+## Optional: Run the full verifier
+
+```bash
+python3 scripts/verify.py
+```
+
+This checks Python version, SQLite FTS5 availability, `mem.py` installation, database connectivity, and skill placement.

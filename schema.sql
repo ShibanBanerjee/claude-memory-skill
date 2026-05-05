@@ -1,55 +1,51 @@
--- Claude Memory System — Schema
--- Run this once in your Supabase SQL editor before using the /mem skill
+-- Claude Memory Skill — SQLite Schema
+-- Applied automatically by mem.py on first run.
+-- This file is provided as a reference. You do not need to run it manually.
 
--- Enable full-text search (already available in Postgres, no extension needed)
--- Enable pgvector for future semantic search (optional)
--- CREATE EXTENSION IF NOT EXISTS vector;
+PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS claude_memories (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  conversation_id TEXT,
-  conversation_url TEXT,
-  title           TEXT NOT NULL,
-  project         TEXT,
-  summary         TEXT NOT NULL,
-  key_decisions   JSONB DEFAULT '[]'::jsonb,
-  open_questions  JSONB DEFAULT '[]'::jsonb,
-  entities        JSONB DEFAULT '{}'::jsonb,
-  tags            TEXT[] DEFAULT '{}',
-  token_count_est INTEGER,
-  -- Full-text search vector (auto-generated)
-  search_vector   TSVECTOR GENERATED ALWAYS AS (
-    to_tsvector('english',
-      COALESCE(title, '') || ' ' ||
-      COALESCE(project, '') || ' ' ||
-      COALESCE(summary, '') || ' ' ||
-      COALESCE(array_to_string(tags, ' '), '')
-    )
-  ) STORED
+    id               TEXT PRIMARY KEY,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    title            TEXT NOT NULL,
+    project          TEXT NOT NULL DEFAULT '',
+    conversation_url TEXT NOT NULL DEFAULT '',
+    summary          TEXT NOT NULL,
+    key_decisions    TEXT NOT NULL DEFAULT '[]',
+    open_questions   TEXT NOT NULL DEFAULT '[]',
+    entities         TEXT NOT NULL DEFAULT '{}',
+    tags             TEXT NOT NULL DEFAULT '[]',
+    token_count_est  INTEGER NOT NULL DEFAULT 0
 );
 
--- Indexes
-CREATE INDEX IF NOT EXISTS idx_memories_search   ON claude_memories USING GIN(search_vector);
-CREATE INDEX IF NOT EXISTS idx_memories_tags     ON claude_memories USING GIN(tags);
-CREATE INDEX IF NOT EXISTS idx_memories_project  ON claude_memories (project);
-CREATE INDEX IF NOT EXISTS idx_memories_created  ON claude_memories (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_memories_conv_id  ON claude_memories (conversation_id);
+-- Full-text search index across title, project, summary, and tags
+CREATE VIRTUAL TABLE IF NOT EXISTS claude_memories_fts
+USING fts5(
+    title, project, summary, tags,
+    content='claude_memories',
+    content_rowid='rowid'
+);
 
--- RLS: disable for personal use, or enable and add policies for team use
-ALTER TABLE claude_memories DISABLE ROW LEVEL SECURITY;
+-- Keep FTS in sync on insert
+CREATE TRIGGER IF NOT EXISTS memories_ai
+AFTER INSERT ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(rowid, title, project, summary, tags)
+    VALUES (new.rowid, new.title, new.project, new.summary, new.tags);
+END;
 
--- Useful view: memory cards (compact, for quick listing)
-CREATE OR REPLACE VIEW memory_cards AS
-SELECT
-  id,
-  created_at::DATE                    AS date,
-  title,
-  project,
-  tags,
-  LEFT(summary, 200) || '...'         AS preview,
-  jsonb_array_length(key_decisions)   AS decision_count,
-  jsonb_array_length(open_questions)  AS question_count,
-  conversation_url
-FROM claude_memories
-ORDER BY created_at DESC;
+-- Keep FTS in sync on update
+CREATE TRIGGER IF NOT EXISTS memories_au
+AFTER UPDATE ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(claude_memories_fts, rowid, title, project, summary, tags)
+    VALUES ('delete', old.rowid, old.title, old.project, old.summary, old.tags);
+    INSERT INTO claude_memories_fts(rowid, title, project, summary, tags)
+    VALUES (new.rowid, new.title, new.project, new.summary, new.tags);
+END;
+
+-- Keep FTS in sync on delete
+CREATE TRIGGER IF NOT EXISTS memories_ad
+AFTER DELETE ON claude_memories BEGIN
+    INSERT INTO claude_memories_fts(claude_memories_fts, rowid, title, project, summary, tags)
+    VALUES ('delete', old.rowid, old.title, old.project, old.summary, old.tags);
+END;

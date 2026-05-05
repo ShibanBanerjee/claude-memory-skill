@@ -6,66 +6,115 @@
 
 | Column | Type | Description |
 |---|---|---|
-| id | UUID | Primary key, auto-generated |
-| created_at | TIMESTAMPTZ | When memory was first saved |
-| updated_at | TIMESTAMPTZ | When memory was last updated |
-| conversation_id | TEXT | Claude conversation ID if known |
-| conversation_url | TEXT | URL to the original conversation |
+| id | TEXT | UUID primary key, auto-generated |
+| created_at | TEXT | ISO 8601 UTC timestamp — when memory was first saved |
+| updated_at | TEXT | ISO 8601 UTC timestamp — when memory was last updated |
 | title | TEXT (required) | Descriptive title |
-| project | TEXT | Project or domain name for filtering |
-| summary | TEXT (required) | Full detailed narrative (1,500-4,000 words) |
-| key_decisions | JSONB | Array of decision strings with reasoning |
-| open_questions | JSONB | Array of specific actionable questions |
-| instructions | JSONB | Array of user preference/directive strings |
-| entities | JSONB | Object: {people, products, companies, ...} |
-| tags | TEXT[] | Searchable keyword array |
+| project | TEXT | Project or domain slug for grouping and upsert matching |
+| conversation_url | TEXT | URL to the original conversation, if known |
+| summary | TEXT (required) | Full detailed narrative (1,500–4,000 words) |
+| key_decisions | TEXT | JSON array of decision strings with reasoning |
+| open_questions | TEXT | JSON array of specific actionable questions |
+| entities | TEXT | JSON object: {people, products, companies, concepts, documents} |
+| tags | TEXT | JSON array of searchable keyword strings |
 | token_count_est | INTEGER | Approximate word count of summary |
-| search_vector | TSVECTOR | Auto-maintained full-text search index |
 
-### memory_cards (view)
-Compact view for listing. Columns: id, date, last_updated, title, project,
-tags, preview (300 chars), decision_count, question_count, instruction_count,
-token_count_est, conversation_url.
+### claude_memories_fts (virtual table)
 
-## REST API (via Supabase)
+FTS5 virtual table indexing `title`, `project`, `summary`, and `tags`. Kept in sync automatically via triggers on insert, update, and delete.
 
-Base URL: `https://YOUR_PROJECT.supabase.co/rest/v1`
+---
 
-Headers required:
-```
-Authorization: Bearer YOUR_ANON_KEY
-apikey: YOUR_ANON_KEY
-Content-Type: application/json
-```
+## mem.py CLI Reference
 
-### List memories
-```
-GET /claude_memories?select=*&order=created_at.desc&limit=20
+All commands output JSON to stdout. Errors are written to stderr.
+
+### setup
+
+```bash
+python3 ~/mem.py setup
 ```
 
-### Search
-```
-GET /claude_memories?search_vector=fts.query+terms&order=created_at.desc
+Initialises the database schema (creates the file and tables if they don't exist) and prints the current memory count.
+
+### check
+
+```bash
+python3 ~/mem.py check --project "project-slug"
 ```
 
-### Get by ID
-```
-GET /claude_memories?id=eq.UUID&select=*
+Returns whether a memory exists for the given project slug. Used by Claude before storing to decide insert vs update.
+
+**Output — found:**
+```json
+{"exists": true, "id": "uuid", "title": "...", "created_at": "...", "updated_at": "..."}
 ```
 
-### Insert
-```
-POST /claude_memories
-Body: JSON object with required fields title and summary
-```
-
-### Update
-```
-PATCH /claude_memories?id=eq.UUID
-Body: JSON object with fields to update
+**Output — not found:**
+```json
+{"exists": false}
 ```
 
-### Delete
+### store
+
+```bash
+python3 ~/mem.py store << 'MEMORY_JSON'
+{"title": "...", "project": "...", "summary": "...", ...}
+MEMORY_JSON
 ```
-DELETE /claude_memories?id=eq.UUID
+
+Reads a memory JSON object from stdin and inserts a new record. Required fields: `title`, `summary`.
+
+**Output:**
+```json
+{"status": "stored", "id": "new-uuid", "title": "...", "created_at": "..."}
 ```
+
+### update
+
+```bash
+python3 ~/mem.py update --id <uuid> << 'MEMORY_JSON'
+{"title": "...", "project": "...", "summary": "...", ...}
+MEMORY_JSON
+```
+
+Reads a memory JSON object from stdin and updates the record with the given ID.
+
+**Output:**
+```json
+{"status": "updated", "id": "uuid", "title": "...", "updated_at": "..."}
+```
+
+### search
+
+```bash
+python3 ~/mem.py search --query "search terms" [--project "slug"] [--limit N]
+```
+
+Full-text search using FTS5. Falls back to LIKE search if FTS5 returns no results. Default limit: 5.
+
+**Output:**
+```json
+{"status": "found", "count": 2, "memories": [...]}
+```
+
+### list
+
+```bash
+python3 ~/mem.py list [--project "slug"] [--limit N]
+```
+
+Lists memories in reverse chronological order. Default limit: 20.
+
+**Output:**
+```json
+{"count": 5, "memories": [...]}
+```
+
+### get
+
+```bash
+python3 ~/mem.py get --id <uuid>
+```
+
+Retrieves a single memory by UUID. Exits with code 1 if not found.

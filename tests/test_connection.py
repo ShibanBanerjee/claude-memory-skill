@@ -1,35 +1,42 @@
 #!/usr/bin/env python3
-"""Test Supabase connectivity."""
-import sys, json
+"""Test SQLite database connectivity and FTS5 availability."""
+import sys
+import sqlite3
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
+DB_PATH = Path.home() / ".claude_memory.db"
 
 def test_connection():
+    # Verify FTS5 is available
     try:
-        import requests
-    except ImportError:
-        print("FAIL: requests not installed")
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+        db.close()
+    except sqlite3.OperationalError:
+        print(f"FAIL: SQLite FTS5 not available (SQLite {sqlite3.sqlite_version})")
         return False
 
-    config_path = Path.home() / ".claude_memory_config.json"
-    if not config_path.exists():
-        print("FAIL: ~/.claude_memory_config.json not found")
-        return False
-
-    cfg = json.loads(config_path.read_text())
-    key = cfg["supabase_anon_key"]
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    if not key.startswith("sb_"):
-        headers["apikey"] = key
-
-    url = cfg["supabase_url"].rstrip("/") + "/rest/v1/claude_memories"
-    r = requests.get(url, headers=headers, params={"select": "count", "limit": "1"}, timeout=10)
-
-    if r.status_code == 200:
-        print("PASS: Connected to Supabase successfully")
+    # Connect to the real database and ensure schema exists
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS claude_memories (
+                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                title TEXT NOT NULL, project TEXT NOT NULL DEFAULT '',
+                conversation_url TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL,
+                key_decisions TEXT NOT NULL DEFAULT '[]', open_questions TEXT NOT NULL DEFAULT '[]',
+                entities TEXT NOT NULL DEFAULT '{}', tags TEXT NOT NULL DEFAULT '[]',
+                token_count_est INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        db.commit()
+        count = db.execute("SELECT COUNT(*) FROM claude_memories").fetchone()[0]
+        db.close()
+        print(f"PASS: Connected to {DB_PATH} — {count} memories stored (SQLite {sqlite3.sqlite_version} + FTS5)")
         return True
-    else:
-        print(f"FAIL: {r.status_code} — {r.text}")
+    except Exception as e:
+        print(f"FAIL: {e}")
         return False
 
 if __name__ == "__main__":
