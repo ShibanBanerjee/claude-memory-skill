@@ -1,0 +1,47 @@
+name: Validate Skill
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check SKILL.md exists and has frontmatter
+        run: |
+          if [ ! -f SKILL.md ]; then
+            echo "ERROR: SKILL.md not found"
+            exit 1
+          fi
+          if ! head -1 SKILL.md | grep -q "^---"; then
+            echo "ERROR: SKILL.md missing YAML frontmatter"
+            exit 1
+          fi
+          echo "SKILL.md validation passed"
+
+      - name: Check required files exist
+        run: |
+          files=("scripts/schema.sql" "scripts/mem.py" "README.md" "LICENSE" "CHANGELOG.md")
+          for f in "${files[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Required file missing: $f"
+              exit 1
+            fi
+          done
+          echo "All required files present"
+
+      - name: Validate Python syntax
+        run: python3 -m py_compile scripts/mem.py && echo "Python syntax OK"
+
+      - name: Check SKILL.md size (must be under 8000 tokens)
+        run: |
+          words=$(wc -w < SKILL.md)
+          echo "SKILL.md: $words words"
+          if [ "$words" -gt 6000 ]; then
+            echo "WARNING: SKILL.md is large ($words words). Consider splitting."
+          fi

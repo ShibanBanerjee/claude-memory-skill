@@ -1,0 +1,34 @@
+{
+  "_note": "This is a representative example of a stored memory entry. Field values are illustrative.",
+  "id": "a3f2c1d8-4e5b-4f6a-9c1d-2e3f4a5b6c7d",
+  "created_at": "2026-05-05T10:30:00Z",
+  "updated_at": "2026-05-05T14:15:00Z",
+  "title": "Backend Architecture — Microservices Decision",
+  "project": "backend-rewrite",
+  "conversation_url": "https://claude.ai/chat/example",
+  "tags": ["architecture", "microservices", "monolith", "postgres", "api-design", "backend"],
+  "summary": "The session focused on evaluating microservices versus a modular monolith for the initial launch of the backend rewrite project. The team is currently four engineers, expected to grow to eight within a year.\n\nAfter working through the operational overhead of microservices at current team size — separate deployments, distributed tracing, inter-service auth, shared infrastructure — the decision was to proceed with a modular monolith, with explicit service boundaries defined in the codebase from day one. The boundaries mirror the eventual microservice split (users, billing, content, notifications) but are enforced through directory structure and interface contracts rather than network calls.\n\nThe key constraint driving this decision is that distributed systems debugging at four engineers is disproportionately expensive relative to the scalability benefit, which is not needed at current load projections. The modular structure means extraction is straightforward when team size and load warrant it.\n\nPostgreSQL was confirmed as the primary datastore. Schema design discussed: separate schemas per logical domain (users, billing, content) within a single database instance, with no cross-schema foreign keys. This gives isolation without the operational complexity of multiple database instances.\n\nAPI layer: REST with OpenAPI spec, generated client SDKs. gRPC considered and deferred — overhead not justified until services are extracted. Internal calls between modules are in-process function calls, not HTTP.\n\nThree areas left unresolved and flagged for the next session: (1) database isolation strategy if services are extracted later — schema-per-service vs dedicated instance per service, (2) CI/CD pipeline design — monorepo vs separate repos per future service, (3) auth strategy for the notification service which needs to call the users service.\n\nInstructions captured: format all architecture diagrams as ASCII for easy pasting into docs; prefer explicit tradeoff analysis over recommendations.",
+  "key_decisions": [
+    "Modular monolith chosen over microservices for initial launch — microservices overhead (distributed tracing, inter-service auth, separate deployments) is disproportionate for a four-engineer team; extraction is straightforward later due to explicit boundaries",
+    "Service boundaries defined in code, not over the network — directory structure and interface contracts enforce separation without network call overhead",
+    "PostgreSQL — separate schemas per domain within a single instance; no cross-schema foreign keys; gives isolation without operational complexity of multiple instances",
+    "REST with OpenAPI spec chosen over gRPC — gRPC overhead not justified until services are extracted; generated client SDKs from spec",
+    "Internal module calls are in-process function calls — not HTTP, not message queues; simplifies debugging and removes distributed systems failure modes for now",
+    "Monorepo confirmed — easier cross-module refactoring during the modular monolith phase; repo strategy revisited when services are extracted"
+  ],
+  "open_questions": [
+    "Database isolation strategy for eventual service extraction: schema-per-service vs dedicated database instance per service — tradeoffs in data migration complexity vs operational cost",
+    "CI/CD pipeline design: whether to partition the monorepo pipeline by domain boundary now to ease future service extraction, or keep a single pipeline until extraction happens",
+    "Auth strategy for the notification service: it needs user data from the users module — whether to pass data at call time, replicate a users read model, or use a shared auth token"
+  ],
+  "instructions": [
+    "Format architecture diagrams as ASCII — easier to paste into documentation and PRs",
+    "Lead with tradeoffs before recommendations — avoid presenting a single answer without the alternatives"
+  ],
+  "entities": {
+    "products": ["backend-rewrite"],
+    "technologies": ["PostgreSQL", "REST", "OpenAPI", "gRPC"],
+    "concepts": ["modular monolith", "service boundaries", "schema-per-domain", "distributed systems"]
+  },
+  "token_count_est": 1840
+}
