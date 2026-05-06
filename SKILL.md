@@ -203,6 +203,6 @@ A good memory lets future Claude:
 | Error | Action |
 |---|---|
 | `python3: command not found` | User needs Python 3.8+. Direct them to python.org |
-| `No such file or directory: ~/mem.py` | User hasn't installed mem.py. Run: `cp scripts/mem.py ~/mem.py` |
+| `No such file or directory: ~/mem.py` | mem.py is not installed on the user's machine. They must install it themselves in their own terminal — Claude cannot do this. Provide these exact commands: **Mac/Linux:** `curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py` then `python3 ~/mem.py setup` — **Windows PowerShell:** `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py" -OutFile "$env:USERPROFILE\mem.py"` then `python "$env:USERPROFILE\mem.py" setup` |
 | `No search results` | Try simpler terms, then `/mem list` to browse all memories |
 | `ERROR: Invalid JSON` | Rebuild the JSON object carefully — check for unescaped quotes or special characters |
