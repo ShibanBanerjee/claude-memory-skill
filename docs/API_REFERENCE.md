@@ -1,120 +1,322 @@
 # API Reference
 
-## Database Schema
-
-### claude_memories
-
-| Column | Type | Description |
-|---|---|---|
-| id | TEXT | UUID primary key, auto-generated |
-| created_at | TEXT | ISO 8601 UTC timestamp — when memory was first saved |
-| updated_at | TEXT | ISO 8601 UTC timestamp — when memory was last updated |
-| title | TEXT (required) | Descriptive title |
-| project | TEXT | Project or domain slug for grouping and upsert matching |
-| conversation_url | TEXT | URL to the original conversation, if known |
-| summary | TEXT (required) | Full detailed narrative (1,500–4,000 words) |
-| key_decisions | TEXT | JSON array of decision strings with reasoning |
-| open_questions | TEXT | JSON array of specific actionable questions |
-| entities | TEXT | JSON object: {people, products, companies, concepts, documents} |
-| tags | TEXT | JSON array of searchable keyword strings |
-| token_count_est | INTEGER | Approximate word count of summary |
-
-### claude_memories_fts (virtual table)
-
-FTS5 virtual table indexing `title`, `project`, `summary`, and `tags`. Kept in sync automatically via triggers on insert, update, and delete.
+Claude Memory exposes two interfaces: a **CLI** (for Mac/Linux direct mode) and an **HTTP API** (for Windows and any platform running `mem_server.py`). Both interfaces are functionally identical — same data, same operations, same responses.
 
 ---
 
-## mem.py CLI Reference
+## CLI Reference (`mem.py`)
 
-All commands output JSON to stdout. Errors are written to stderr.
+Used on Mac/Linux when `mem.py` is installed at `~/mem.py`.
 
-### setup
-
+### `setup`
+Initialises the database schema and prints status.
 ```bash
 python3 ~/mem.py setup
 ```
+Output:
+```
+✅ Claude Memory — local database ready
+   Location: /home/you/.claude_memory.db
+   Memories stored: 3
+```
 
-Initialises the database schema (creates the file and tables if they don't exist) and prints the current memory count.
-
-### check
-
+### `check`
+Returns whether a memory exists for a given project slug.
 ```bash
 python3 ~/mem.py check --project "project-slug"
 ```
-
-Returns whether a memory exists for the given project slug. Used by Claude before storing to decide insert vs update.
-
-**Output — found:**
+Output (exists):
 ```json
 {"exists": true, "id": "uuid", "title": "...", "created_at": "...", "updated_at": "..."}
 ```
-
-**Output — not found:**
+Output (not found):
 ```json
 {"exists": false}
 ```
 
-### store
-
+### `store`
+Reads JSON from stdin and inserts a new memory record.
 ```bash
 python3 ~/mem.py store << 'MEMORY_JSON'
 {"title": "...", "project": "...", "summary": "...", ...}
 MEMORY_JSON
 ```
-
-Reads a memory JSON object from stdin and inserts a new record. Required fields: `title`, `summary`.
-
-**Output:**
+Output:
 ```json
 {"status": "stored", "id": "new-uuid", "title": "...", "created_at": "..."}
 ```
 
-### update
-
+### `update`
+Reads JSON from stdin and overwrites an existing memory record by ID.
 ```bash
-python3 ~/mem.py update --id <uuid> << 'MEMORY_JSON'
+python3 ~/mem.py update --id "uuid" << 'MEMORY_JSON'
 {"title": "...", "project": "...", "summary": "...", ...}
 MEMORY_JSON
 ```
-
-Reads a memory JSON object from stdin and updates the record with the given ID.
-
-**Output:**
+Output:
 ```json
 {"status": "updated", "id": "uuid", "title": "...", "updated_at": "..."}
 ```
 
-### search
-
+### `search`
+Full-text search across title, project, summary, and tags. Falls back to LIKE if FTS returns nothing.
 ```bash
-python3 ~/mem.py search --query "search terms" [--project "slug"] [--limit N]
+python3 ~/mem.py search --query "devam strategy" --limit 5
+python3 ~/mem.py search --query "devam" --project "devam-strategy" --limit 3
 ```
-
-Full-text search using FTS5. Falls back to LIKE search if FTS5 returns no results. Default limit: 5.
-
-**Output:**
+Output:
 ```json
 {"status": "found", "count": 2, "memories": [...]}
+{"status": "no_results", "query": "..."}
 ```
 
-### list
-
+### `list`
+Lists all memories ordered by most recently updated.
 ```bash
-python3 ~/mem.py list [--project "slug"] [--limit N]
+python3 ~/mem.py list --limit 20
+python3 ~/mem.py list --project "devam-strategy" --limit 5
 ```
-
-Lists memories in reverse chronological order. Default limit: 20.
-
-**Output:**
+Output:
 ```json
-{"count": 5, "memories": [...]}
+{"count": 3, "memories": [{...}, {...}, {...}]}
 ```
 
-### get
+### `get`
+Retrieves a single full memory record by UUID.
+```bash
+python3 ~/mem.py get --id "uuid"
+```
+
+---
+
+## HTTP API Reference (`mem_server.py`)
+
+Used on Windows (and optionally on any platform). Server runs on `localhost:7823` by default.
+
+Base URL: `http://localhost:7823` (or `http://host.docker.internal:7823` from inside Claude's container)
+
+All endpoints return `Content-Type: application/json`.
+
+---
+
+### `GET /health`
+Server status and memory count.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "db": "/Users/you/.claude_memory.db",
+  "memories": 5,
+  "version": "2.1.0"
+}
+```
+
+---
+
+### `GET /setup`
+Initialises the database schema (idempotent) and returns status.
+
+**Response:** Same as `/health`.
+
+---
+
+### `GET /check?project=slug`
+Checks whether a memory exists for the given project slug.
+
+**Parameters:**
+- `project` (required) — project slug string
+
+**Response (exists):**
+```json
+{
+  "exists": true,
+  "id": "uuid",
+  "title": "...",
+  "created_at": "2026-05-06T10:00:00Z",
+  "updated_at": "2026-05-06T12:00:00Z"
+}
+```
+
+**Response (not found):**
+```json
+{"exists": false}
+```
+
+---
+
+### `POST /store`
+Inserts a new memory record. Body must be a JSON object with at least `title` and `summary`.
+
+**Request body:**
+```json
+{
+  "title": "Devam Strategy Session — May 2026",
+  "project": "devam-strategy",
+  "conversation_url": "",
+  "tags": ["devam", "strategy", "product"],
+  "summary": "1500-4000 word narrative...",
+  "key_decisions": ["Decision 1 — reason", "Decision 2 — reason"],
+  "open_questions": ["What is the next step for X?"],
+  "entities": {
+    "people": ["Shiban — CTO"],
+    "products": ["Devam", "Prasad"],
+    "companies": ["Zyra"],
+    "concepts": ["faith economy", "SCE"],
+    "documents": ["Devam_Vision_Strategy.docx"]
+  },
+  "token_count_est": 0
+}
+```
+
+**Response:**
+```json
+{
+  "status": "stored",
+  "id": "new-uuid",
+  "title": "Devam Strategy Session — May 2026",
+  "created_at": "2026-05-06T14:30:00Z"
+}
+```
+
+**curl example:**
+```bash
+curl -X POST http://localhost:7823/store \
+  -H "Content-Type: application/json" \
+  -d '{"title": "...", "project": "...", "summary": "..."}'
+```
+
+---
+
+### `POST /update?id=uuid`
+Overwrites an existing memory record. Same body shape as `/store`.
+
+**Parameters:**
+- `id` (required) — UUID of the memory to update
+
+**Response:**
+```json
+{
+  "status": "updated",
+  "id": "uuid",
+  "title": "...",
+  "updated_at": "2026-05-06T15:00:00Z"
+}
+```
+
+**Response (not found):**
+```json
+{"status": "not_found", "id": "uuid"}
+```
+HTTP status 404.
+
+---
+
+### `GET /search?query=term&limit=5&project=optional`
+Full-text search. Falls back to LIKE search if FTS returns nothing.
+
+**Parameters:**
+- `query` (required) — search terms
+- `limit` (optional, default 5) — max results
+- `project` (optional) — filter to specific project
+
+**Response:**
+```json
+{
+  "status": "found",
+  "count": 2,
+  "memories": [{...full memory object...}, {...}]
+}
+```
+or
+```json
+{"status": "no_results", "query": "your query"}
+```
+
+---
+
+### `GET /list?limit=20&project=optional`
+Lists all memories ordered by most recently updated.
+
+**Parameters:**
+- `limit` (optional, default 20)
+- `project` (optional) — filter to specific project
+
+**Response:**
+```json
+{
+  "count": 5,
+  "memories": [
+    {
+      "id": "uuid",
+      "created_at": "...",
+      "updated_at": "...",
+      "title": "...",
+      "project": "...",
+      "tags": [...],
+      "token_count_est": 312,
+      "conversation_url": ""
+    }
+  ]
+}
+```
+
+---
+
+### `GET /get?id=uuid`
+Returns a single full memory record.
+
+**Parameters:**
+- `id` (required) — UUID
+
+**Response:** Full memory object including all fields.
+
+**Response (not found):**
+```json
+{"status": "not_found", "id": "uuid"}
+```
+HTTP status 404.
+
+---
+
+## Memory Object Schema
+
+All endpoints that return memories use this structure:
+
+```json
+{
+  "id": "uuid-v4",
+  "created_at": "2026-05-06T10:00:00Z",
+  "updated_at": "2026-05-06T12:00:00Z",
+  "title": "Short descriptive title (max 100 chars)",
+  "project": "project-slug",
+  "conversation_url": "https://claude.ai/chat/... or empty string",
+  "summary": "1500-4000 word lossless narrative",
+  "key_decisions": ["Decision — reasoning", "..."],
+  "open_questions": ["Specific actionable question", "..."],
+  "entities": {
+    "people": ["Name — Role"],
+    "products": ["Product name"],
+    "companies": ["Company name"],
+    "concepts": ["Framework or methodology"],
+    "documents": ["Document title"]
+  },
+  "tags": ["tag1", "tag2", "tag3"],
+  "token_count_est": 312
+}
+```
+
+---
+
+## Server Configuration
 
 ```bash
-python3 ~/mem.py get --id <uuid>
-```
+# Custom port
+python3 ~/mem_server.py --port 8080
 
-Retrieves a single memory by UUID. Exits with code 1 if not found.
+# Restrict to loopback only (more secure, but Claude's container can't reach it)
+python3 ~/mem_server.py --host 127.0.0.1
+
+# Default: listen on all interfaces, port 7823
+python3 ~/mem_server.py
+```

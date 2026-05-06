@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.1.0] — 2026-05-06
+
+### Added
+- `mem_server.py` — lightweight local HTTP server enabling Windows Claude Desktop support. Exposes all memory operations as JSON endpoints on `localhost:7823`. Pure Python stdlib, zero dependencies.
+- `scripts/start_mem_server.ps1` — Windows PowerShell startup script. Downloads `mem_server.py` if missing, starts it as a hidden background process, prints Task Scheduler commands for auto-start on login.
+- `scripts/start_mem_server.sh` — Mac/Linux startup script with launchd (Mac) and systemd (Linux) auto-start instructions.
+- `SKILL.md` now includes Step 0: auto-detection block that probes for direct python3 mode (Mac/Linux) and HTTP server mode (Windows) at the start of every session. Platform-agnostic — same SKILL.md works everywhere.
+- HTTP API endpoints: `GET /health`, `/setup`, `/check`, `/list`, `/search`, `/get` · `POST /store`, `/update`
+- `docs/WINDOWS.md` — complete Windows setup guide explaining the container architecture and server approach.
+- `docs/API_REFERENCE.md` updated with full HTTP API documentation.
+
+### Changed
+- `SKILL.md` restructured: every command now has a Direct mode (Mac/Linux) and HTTP mode (Windows) variant.
+- `README.md` updated with Windows Quick Start section and architecture explanation.
+- `INSTALL.md` updated with correct file paths (`mem.py` at repo root, not `scripts/mem.py`) and Windows server install steps.
+- Error handling in `SKILL.md` now provides correct, platform-specific install commands — no more placeholder URLs.
+
+### Fixed
+- `INSTALL.md` previously referenced `scripts/mem.py` (wrong path — `mem.py` is at repo root).
+- Error recovery instructions in `SKILL.md` previously showed placeholder `your-repo` URL.
+
+---
+
 ## [2.0.0] — 2026-05-06
 
 ### Changed
@@ -47,7 +70,6 @@
 ## [1.0.0] — 2026-04-20
 
 Initial release.
-
 - `/mem` and `/context` slash commands
 - Supabase PostgreSQL storage with full-text search
 - `scripts/mem.py` CLI helper

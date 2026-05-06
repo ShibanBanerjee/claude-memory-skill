@@ -1,27 +1,46 @@
 # 🧠 Claude Memory Skill
 
-> **Persistent, searchable memory for Claude — stored locally on your machine.**
+> **Persistent, searchable memory for Claude — stored locally on your machine. Works on Mac, Linux, and Windows.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Claude Skills](https://img.shields.io/badge/Claude-Skill-blueviolet)](https://github.com/anthropics/skills)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org)
-[![SQLite](https://img.shields.io/badge/Storage-SQLite-green)](https://sqlite.org)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-
-Claude's context window resets with every new conversation. This skill gives Claude a **persistent memory layer** — so your long-running projects, key decisions, and working context are never lost.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Claude Skills](https://img.shields.io/badge/Claude-Skill-blueviolet)](https://github.com/anthropics/skills) [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org) [![SQLite](https://img.shields.io/badge/Storage-SQLite-green)](https://sqlite.org) [![Version](https://img.shields.io/badge/version-2.1.0-blue)](CHANGELOG.md) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 **Type `/mem` to save. Type `/context` to restore.**
 
-No accounts. No configuration. No external services. Everything stays on your machine.
+No accounts. No cloud. No configuration. Everything stays on your machine.
+
+---
+
+## ⚠️ Security Notice
+
+This skill runs Python scripts on your local machine via `bash_tool`. Only install skills from sources you trust. `mem.py` and `mem_server.py` are pure Python standard library — zero external dependencies. All they do is read and write a local SQLite file.
+
+---
+
+## Prerequisites
+
+| Requirement | Detail |
+|---|---|
+| **Claude plan** | Pro, Max, Team, or Enterprise. **Skills are not available on the free tier.** |
+| **Platform** | Claude Desktop (macOS, Windows, Linux) · Claude.ai web · Claude Code |
+| **Python** | 3.8 or higher — standard library only, no pip installs |
 
 ---
 
 ## The Problem This Solves
 
-You spend three hours in a deep product brainstorm with Claude. Fifteen critical decisions. Four frameworks applied. A full strategy mapped with nuance that took hours to develop. Then you open a new conversation — and Claude knows nothing.
+You spend three hours in a deep product brainstorm with Claude. Fifteen critical decisions. Four frameworks applied. A full strategy mapped with nuance that took hours to develop. Then you open a new conversation — and Claude knows nothing. Claude even starts forgetting earlier parts of the same long running conversation. It starts hallucinating in long running conversations, missing key details.
 
-Claude Memory fixes this. One command saves everything. One command restores it in any future session, in any conversation.
+Claude Memory fixes this. One command saves everything. One command restores it in any future session, in any conversation. You can even load more than one memory in a new conversation, giving you the superpower to reference the details of multiple earlier conversations in a single session without overflooding your context window.
+
+---
+
+## ⚠️ How This Actually Works — Read This First
+
+Claude Desktop uses `bash_tool` to run commands. On **Mac and Linux**, bash_tool runs directly on your real machine — so `mem.py` works via direct Python calls. On **Windows**, bash_tool runs inside an isolated Linux container that cannot touch your Windows filesystem — so a lightweight local HTTP server (`mem_server.py`) bridges the gap.
+
+The SKILL.md auto-detects which mode to use. You do not need to configure anything.
+
+**Critical:** Claude cannot install these files for you. You must run the install commands yourself in your own terminal. Anything Claude installs disappears when the conversation ends.
 
 ---
 
@@ -33,11 +52,10 @@ Your Conversation (hours of work)
          |  /mem "My Project"
          v
 Claude Memory Skill
-  1. Checks existing memories for this project
+  1. Auto-detects: direct python3 (Mac/Linux) or HTTP server (Windows)
   2. Reads the ENTIRE conversation from start to finish
   3. Generates detailed summary (1,500–4,000 words)
-  4. Extracts: decisions + WHY, rejected ideas,
-     open questions, entities, tags
+  4. Extracts: decisions + WHY, rejected ideas, open questions, entities, tags
   5. If memory exists for this project → UPDATES it
      If no memory exists → INSERTS new entry
      One clean memory per project. No duplicates.
@@ -49,59 +67,80 @@ Your data. Your machine. Your control.
          |  New conversation, any time later
          |  /context "project name"
          v
-Claude, fully restored
-"Resuming your project. Last session you completed X.
-15 decisions locked. Next step: Y. Where to start?"
+Claude, fully restored — decisions locked, agenda set, ready to continue
 ```
 
 ---
 
 ## Quick Start
 
-**Requires: Python 3.8+** — no additional packages, no pip installs, nothing beyond what Python ships with.
+### Mac / Linux
 
-### 1. Install the Python helper
-
+**Step 1 — Install mem.py:**
 ```bash
-# Mac / Linux
-cp scripts/mem.py ~/mem.py
-
-# Windows PowerShell
-Copy-Item scripts\mem.py "$env:USERPROFILE\mem.py"
-```
-
-### 2. Install the skill
-
-**Claude Code:**
-```bash
-mkdir -p ~/.claude/skills/claude-memory
-cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
-```
-
-**Claude.ai:** Settings → Skills → Upload Custom Skill → select `SKILL.md`
-
-### 3. Verify
-
-```bash
+curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py
 python3 ~/mem.py setup
 ```
 
-Expected output:
+Expected:
 ```
 ✅ Claude Memory — local database ready
    Location: /home/you/.claude_memory.db
    Memories stored: 0
 ```
 
-### 4. Use it
+**Step 2 — Install the skill in Claude:**
+- **Claude Desktop / Claude.ai:** Settings → Skills → Add Custom Skill → upload `SKILL.md`
+- **Claude Code:** `mkdir -p ~/.claude/skills/claude-memory && curl -o ~/.claude/skills/claude-memory/SKILL.md https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/SKILL.md`
 
+**Step 3 — Use it:**
 ```
-/mem "My Project"      # Save current conversation
-/context my project    # Restore in any future session
-/mem list              # Browse all saved memories
+/mem "My Project"     # Save current conversation
+/context my project   # Restore in any future session
+/mem list             # Browse all saved memories
 ```
 
-The database is created automatically on first use. There is nothing else to configure.
+---
+
+### Windows
+
+Windows requires a local HTTP server because Claude Desktop's bash tool runs in an isolated Linux container that cannot access your Windows filesystem. `mem_server.py` runs on your real machine and Claude reaches it over localhost.
+
+**Step 1 — Download and start the server (run this in PowerShell, once):**
+```powershell
+# Download
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem_server.py" -OutFile "$env:USERPROFILE\mem_server.py"
+
+# Start in background (hidden window)
+Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden
+
+# Verify it's running
+Invoke-WebRequest -Uri "http://localhost:7823/health" | Select-Object -ExpandProperty Content
+```
+
+Expected:
+```json
+{"status": "ok", "db": "C:\\Users\\you\\.claude_memory.db", "memories": 0, "version": "2.1.0"}
+```
+
+**Step 2 — Auto-start on login (optional but recommended):**
+```powershell
+$action  = New-ScheduledTaskAction -Execute "python" -Argument "$env:USERPROFILE\mem_server.py"
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName "ClaudeMemoryServer" -Action $action -Trigger $trigger -RunLevel Highest
+```
+
+**Step 3 — Install the skill in Claude Desktop:**
+Settings → Skills → Add Custom Skill → upload `SKILL.md`
+
+**Step 4 — Use it (same commands as Mac/Linux):**
+```
+/mem "My Project"
+/context my project
+/mem list
+```
+
+For detailed Windows instructions see [docs/WINDOWS.md](docs/WINDOWS.md).
 
 ---
 
@@ -109,9 +148,9 @@ The database is created automatically on first use. There is nothing else to con
 
 | Command | Action |
 |---|---|
-| `/mem [title]` | Save current conversation to memory. If a memory for this project already exists, updates it instead of creating a duplicate. |
+| `/mem [title]` | Save current conversation. Updates existing memory for this project if one exists — no duplicates. |
 | `/mem list` | List all saved memories |
-| `/context [query]` | Search and restore by topic |
+| `/context [query]` | Search and restore memory by topic |
 | `/context id:[uuid]` | Retrieve specific memory by ID |
 | `/recall [query]` | Alias for `/context` |
 
@@ -119,7 +158,7 @@ The database is created automatically on first use. There is nothing else to con
 
 ## What Gets Saved
 
-Claude Memory captures everything that matters — not a compressed summary that loses nuance, but a complete detailed record:
+Not a compressed summary. A complete, lossless record:
 
 - **Summary** (1,500–4,000 words): Full narrative of everything discussed
 - **Key decisions**: What was decided, WHY, and what was REJECTED with reasons
@@ -127,7 +166,7 @@ Claude Memory captures everything that matters — not a compressed summary that
 - **Entities**: All named people, products, companies, tools, documents
 - **Tags**: Auto-extracted for searchability
 
-Most memory tools compress aggressively. This one does not. A decision without its reasoning is half-useless. A rejected option without its rejection reason is actively dangerous — future Claude might re-propose it. A few hundred extra words in the database costs nothing. A lost decision costs everything.
+A decision without its reasoning is half-useless. A rejected option without its rejection reason is dangerous — future Claude might re-propose it.
 
 ---
 
@@ -135,49 +174,92 @@ Most memory tools compress aggressively. This one does not. A decision without i
 
 ```
 claude-memory-skill/
-├── SKILL.md                    Core skill — Claude reads this
+├── SKILL.md                    Upload this to Claude (auto-detects platform)
+├── mem.py                      Mac/Linux: copy to ~/mem.py
+├── mem_server.py               Windows: copy to %USERPROFILE%\mem_server.py
+├── schema.sql                  SQLite schema reference
 ├── scripts/
-│   ├── mem.py                  Python CLI helper (copy to ~/mem.py)
-│   ├── schema.sql              SQLite schema reference
-│   └── verify.py               Checks your installation
+│   ├── start_mem_server.sh     Mac/Linux server startup script
+│   ├── start_mem_server.ps1    Windows server startup script
+│   ├── setup.sh                Mac/Linux full install script
+│   ├── setup.ps1               Windows full install script
+│   └── verify.py               End-to-end installation checker
 ├── references/
-│   ├── STORAGE_SPEC.md         Storage field specifications
-│   ├── RETRIEVAL_SPEC.md       Retrieval and ranking logic
-│   └── QUALITY_RUBRIC.md       Good vs bad memory standards
+│   ├── STORAGE_SPEC.md
+│   ├── RETRIEVAL_SPEC.md
+│   └── QUALITY_RUBRIC.md
 ├── examples/
-│   ├── example_memory.json     Sample stored memory
-│   ├── example_retrieval.md    Sample retrieval session
-│   └── example_workflow.md     End-to-end walkthrough
+│   ├── example_memory.json
+│   ├── example_retrieval.md
+│   └── example_workflow.md
 ├── tests/
-│   ├── run_all_tests.py        Test runner
-│   ├── test_connection.py      Test SQLite connectivity
-│   ├── test_storage.py         Test write and read
-│   └── test_search.py          Test FTS5 search quality
+│   ├── run_all_tests.py
+│   ├── test_connection.py
+│   ├── test_storage.py
+│   └── test_search.py
 └── docs/
-    ├── SETUP.md                Detailed setup guide
-    ├── WINDOWS.md              Windows-specific instructions
+    ├── WINDOWS.md              Full Windows setup guide
+    ├── SETUP.md                Detailed Mac/Linux guide
     ├── ADVANCED.md             Advanced configuration
     ├── TROUBLESHOOTING.md      Common issues and fixes
-    └── API_REFERENCE.md        CLI and schema reference
+    └── API_REFERENCE.md        CLI + HTTP API reference
 ```
 
-**Storage:** All memories are stored in `~/.claude_memory.db` — a single SQLite file on your local machine. The database is created automatically on first use. Full-text search is powered by SQLite's built-in FTS5 engine, with triggers that keep the search index in sync on every write.
+**Storage:** `~/.claude_memory.db` on Mac/Linux · `C:\Users\you\.claude_memory.db` on Windows. SQLite with FTS5 full-text search. Auto-created on first run.
 
 ---
 
 ## Data Privacy
 
-Your data never leaves your machine. All memories are stored in a local SQLite database. No data is sent to any external service. You can delete any memory or the entire database at any time.
+Your data never leaves your machine. No external services. Delete any memory or the entire database at any time.
 
-**Back up your memories:**
 ```bash
+# Back up
 cp ~/.claude_memory.db ~/claude_memory_backup.db
-```
 
-**Export all memories as JSON:**
-```bash
+# Export all as JSON
 python3 ~/mem.py list --limit 10000
 ```
+
+---
+
+## FAQ
+
+**Does this work on the free Claude plan?**
+No. Skills require Pro, Max, Team, or Enterprise.
+
+**Will memories persist across Claude updates?**
+Yes. The database is completely independent of Claude. Reinstalling Claude has no effect.
+
+**Can I load more than one memory in a single conversation?**
+Yes. Use `/context` multiple times. Claude synthesises them and flags any contradictions. This is one of the most powerful features — reference multiple past conversations without overflowing your context window.
+
+**What happens if I run `/mem` on a project I've already saved?**
+It updates the existing record additively. Nothing is lost.
+
+**Why do I need `mem_server.py` on Windows but not Mac?**
+Claude Desktop on Windows runs bash_tool inside a Linux container that cannot access your Windows filesystem. `mem_server.py` runs on your real machine and Claude reaches it over HTTP. Mac/Linux bash_tool runs on the real filesystem directly, so no server is needed.
+
+**The server was running but stopped after a reboot. What do I do?**
+Add it to Task Scheduler using the command in Step 2 of the Windows Quick Start above.
+
+---
+
+## Troubleshooting
+
+**`mem.py isn't installed yet` (Mac/Linux)**
+Run `curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py && python3 ~/mem.py setup` in your own terminal.
+
+**`Connection refused` on Windows**
+`mem_server.py` is not running. Open PowerShell and run: `Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden`
+
+**`python3: command not found`**
+Install Python 3.8+ from [python.org](https://python.org). On Windows use `python` instead of `python3`.
+
+**`No search results`**
+Try simpler terms, then `/mem list` to browse all saved memories.
+
+Full troubleshooting guide: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ---
 
@@ -186,7 +268,9 @@ python3 ~/mem.py list --limit 10000
 - [x] Full-text search (SQLite FTS5)
 - [x] Local SQLite storage — zero setup, no accounts
 - [x] Upsert logic — one memory per project, no duplicates
-- [x] Detailed storage with quality standards
+- [x] Lossless storage (1,500–4,000 word summaries)
+- [x] Multi-memory loading in a single session
+- [x] Windows support via local HTTP server
 - [ ] Semantic search with local embeddings
 - [ ] Export to Markdown and Obsidian
 - [ ] Memory merging across projects

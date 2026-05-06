@@ -1,50 +1,19 @@
-# Installation
+# Installation Guide
 
 ## Prerequisites
 
-- Python 3.8+ — standard library only, no pip installs required
-- Claude.ai Pro, Max, Team, or Enterprise — or Claude Code
-
-Run the platform-specific setup script for the fastest path:
-
-```bash
-# Mac / Linux
-chmod +x scripts/setup.sh && ./scripts/setup.sh
-
-# Windows PowerShell
-.\scripts\setup.ps1
-```
-
-Or follow the steps below manually.
+- Python 3.8+ — standard library only, zero pip installs
+- Claude Pro, Max, Team, or Enterprise (Skills not available on free tier)
 
 ---
 
-## Step 1: Install the Python helper
-
-**Mac / Linux:**
-```bash
-cp scripts/mem.py ~/mem.py
-chmod +x ~/mem.py
-```
-
-**Windows PowerShell:**
-```powershell
-Copy-Item scripts\mem.py "$env:USERPROFILE\mem.py"
-```
-
-## Step 2: Install the skill
-
-**Claude Code:**
-```bash
-mkdir -p ~/.claude/skills/claude-memory
-cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
-```
-
-**Claude.ai:** Settings → Skills → Upload Custom Skill → select `SKILL.md`
-
-## Step 3: Verify
+## Mac / Linux — Quick Install
 
 ```bash
+# 1. Download mem.py to your home directory
+curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py
+
+# 2. Verify
 python3 ~/mem.py setup
 ```
 
@@ -55,27 +24,78 @@ Expected output:
    Memories stored: 0
 ```
 
-The database is created automatically. No further setup is required.
+Then install the skill in Claude:
+- **Claude Desktop / Claude.ai:** Settings → Skills → Add Custom Skill → upload `SKILL.md`
+- **Claude Code:** `mkdir -p ~/.claude/skills/claude-memory && cp SKILL.md ~/.claude/skills/claude-memory/`
 
-## Step 4: Test it
+---
 
-In any Claude conversation:
-```
-/mem My first memory
+## Windows — Quick Install
+
+Claude Desktop on Windows runs bash commands inside a Linux container that cannot access your Windows filesystem. The solution is `mem_server.py` — a lightweight local HTTP server that runs on your real machine and Claude reaches it over localhost.
+
+**Run these commands in PowerShell:**
+
+```powershell
+# 1. Download mem_server.py
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem_server.py" -OutFile "$env:USERPROFILE\mem_server.py"
+
+# 2. Start the server (hidden background process)
+Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden
+
+# 3. Verify
+Invoke-WebRequest -Uri "http://localhost:7823/health" | Select-Object -ExpandProperty Content
 ```
 
-Claude generates a summary of the conversation, stores it, and returns a memory ID. In any future session:
+Expected output:
+```json
+{"status": "ok", "db": "C:\\Users\\you\\.claude_memory.db", "memories": 0, "version": "2.1.0"}
 ```
-/context my first memory
+
+**Auto-start on login (recommended):**
+```powershell
+$action  = New-ScheduledTaskAction -Execute "python" -Argument "$env:USERPROFILE\mem_server.py"
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName "ClaudeMemoryServer" -Action $action -Trigger $trigger -RunLevel Highest
+```
+
+Then install the skill:
+- Open Claude Desktop → Settings → Skills → Add Custom Skill → upload `SKILL.md`
+
+For full Windows documentation see [docs/WINDOWS.md](docs/WINDOWS.md).
+
+---
+
+## Using Setup Scripts (if you've cloned the repo)
+
+```bash
+# Mac / Linux
+chmod +x scripts/start_mem_server.sh && ./scripts/start_mem_server.sh
+
+# Windows PowerShell
+.\scripts\start_mem_server.ps1
 ```
 
 ---
 
-## File reference
+## Verify Your Install
 
-| File | Purpose |
-|---|---|
-| `SKILL.md` | Skill definition — tells Claude how to handle `/mem` and `/context` |
-| `scripts/mem.py` | Copy to `~/mem.py` — handles all local database operations |
-| `scripts/verify.py` | Checks your installation end-to-end |
-| `~/.claude_memory.db` | Your memory database — created automatically on first use |
+After installing, open a Claude conversation and type:
+
+```
+/mem list
+```
+
+If it returns `No memories saved yet` — you're fully installed. If it returns an error, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+---
+
+## File Reference
+
+| File | Platform | Copy to |
+|---|---|---|
+| `SKILL.md` | All | Upload to Claude via Settings → Skills |
+| `mem.py` | Mac / Linux | `~/mem.py` |
+| `mem_server.py` | Windows | `%USERPROFILE%\mem_server.py` |
+| `~/.claude_memory.db` | Mac / Linux | Created automatically |
+| `C:\Users\you\.claude_memory.db` | Windows | Created automatically |

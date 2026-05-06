@@ -6,7 +6,10 @@ description: Gives Claude persistent, searchable memory across conversations sto
 # Claude Memory Skill — /mem and /context
 
 ## What This Skill Does
-Gives Claude persistent, searchable memory across conversations. All data is stored in a local SQLite database on your machine — no accounts, no cloud services, no configuration required beyond copying two files.
+
+Gives Claude persistent, searchable memory across conversations. All data is stored in a local SQLite database on your machine — no accounts, no cloud services.
+
+Works on **Mac, Linux, and Windows**.
 
 **Trigger words:**
 - `/mem` `/mem [title]` `/memory` `/remember this` — save conversation to memory
@@ -15,14 +18,65 @@ Gives Claude persistent, searchable memory across conversations. All data is sto
 
 ---
 
+## Step 0: Detect Connection Mode — Run at the Start of Every Session
+
+Before anything else, detect which mode to use. Run this exact block:
+
+```bash
+# Try direct mode first (Mac/Linux with mem.py at ~/mem.py)
+if python3 ~/mem.py setup 2>/dev/null | grep -q "ready\|Memories"; then
+  echo "MODE=direct"
+else
+  # Try HTTP server mode (Windows, or Mac/Linux running mem_server.py)
+  MEM_HOST=""
+  for host in localhost host.docker.internal 172.17.0.1 172.18.0.1; do
+    if curl -sf --max-time 2 "http://$host:7823/health" 2>/dev/null | grep -q "ok"; then
+      MEM_HOST="$host"
+      echo "MODE=http HOST=$host"
+      break
+    fi
+  done
+  if [ -z "$MEM_HOST" ]; then
+    echo "MODE=none"
+  fi
+fi
+```
+
+**If MODE=direct** → use all `python3 ~/mem.py ...` commands below.
+**If MODE=http** → use all `curl http://$MEM_HOST:7823/...` commands below.
+**If MODE=none** → mem.py is not installed. Tell the user:
+
+> `mem.py` or `mem_server.py` is not installed on your machine yet. Open your own terminal (not this chat) and run:
+>
+> **Mac/Linux:**
+> ```bash
+> curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py
+> python3 ~/mem.py setup
+> ```
+>
+> **Windows PowerShell:**
+> ```powershell
+> Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem_server.py" -OutFile "$env:USERPROFILE\mem_server.py"
+> Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden
+> ```
+> Then try your command again.
+
+---
+
 ## /mem Command — Full Execution Protocol
 
 ### Step 1: Check for existing memory — UPSERT LOGIC
 
-Derive a `project` slug from the conversation topic (lowercase, hyphen-separated, e.g. `backend-rewrite`, `my-startup`, `personal`). Then check whether a memory already exists for it:
+Derive a `project` slug from the conversation topic (lowercase, hyphen-separated, e.g. `backend-rewrite`, `devam-strategy`, `personal`).
 
+**Direct mode:**
 ```bash
 python3 ~/mem.py check --project "project-slug"
+```
+
+**HTTP mode:**
+```bash
+curl -sf "http://$MEM_HOST:7823/check?project=project-slug"
 ```
 
 Response when a memory exists:
@@ -35,15 +89,14 @@ Response when none exists:
 {"exists": false}
 ```
 
-**If a memory exists for this project:** take the UPDATE path in Step 4. The updated memory must include everything from the previous version PLUS everything new from the current conversation — nothing from the earlier memory should be lost.
-
-**If no memory exists:** take the INSERT path in Step 4.
+**If exists → UPDATE path (Step 4 update). If not → INSERT path (Step 4 store).**
+The updated memory must include everything from the previous version PLUS everything new — nothing is lost.
 
 ---
 
 ### Step 2: Generate the detailed memory — NO LOSSY COMPRESSION
 
-Read the entire conversation from beginning to end. Do not skim. The database has no meaningful size limit. Your goal is LOSSLESS CAPTURE — not token minimisation.
+Read the entire conversation from beginning to end. Do not skim. Your goal is LOSSLESS CAPTURE — not token minimisation.
 
 Target summary length: **1,500 to 4,000 words.**
 
@@ -95,31 +148,39 @@ The summary must contain ALL of the following:
 
 ---
 
-### Step 4: Store via mem.py
+### Step 4: Store or Update
 
-Pipe the JSON from Step 3 to mem.py using a heredoc to avoid shell quoting issues.
-
-**If creating a new memory** (Step 1 returned `"exists": false`):
+**STORE — Direct mode (new memory):**
 ```bash
 python3 ~/mem.py store << 'MEMORY_JSON'
-{"title": "...", "project": "...", "summary": "...", "tags": [...], "key_decisions": [...], "open_questions": [...], "entities": {...}, "token_count_est": 0}
+{ ...json from Step 3... }
 MEMORY_JSON
 ```
 
-Response:
+**STORE — HTTP mode (new memory):**
+```bash
+curl -sf -X POST "http://$MEM_HOST:7823/store" \
+  -H "Content-Type: application/json" \
+  -d '{ ...json from Step 3... }'
+```
+
+**UPDATE — Direct mode (existing memory, use ID from Step 1):**
+```bash
+python3 ~/mem.py update --id "uuid-from-step-1" << 'MEMORY_JSON'
+{ ...json from Step 3... }
+MEMORY_JSON
+```
+
+**UPDATE — HTTP mode (existing memory):**
+```bash
+curl -sf -X POST "http://$MEM_HOST:7823/update?id=uuid-from-step-1" \
+  -H "Content-Type: application/json" \
+  -d '{ ...json from Step 3... }'
+```
+
+Expected responses:
 ```json
 {"status": "stored", "id": "new-uuid", "title": "...", "created_at": "..."}
-```
-
-**If updating an existing memory** (Step 1 returned `"exists": true` with an ID):
-```bash
-python3 ~/mem.py update --id "id-from-step-1" << 'MEMORY_JSON'
-{"title": "...", "project": "...", "summary": "...", "tags": [...], "key_decisions": [...], "open_questions": [...], "entities": {...}, "token_count_est": 0}
-MEMORY_JSON
-```
-
-Response:
-```json
 {"status": "updated", "id": "uuid", "title": "...", "updated_at": "..."}
 ```
 
@@ -138,7 +199,7 @@ Open questions: [N]
 Tags: [tags]
 
 Restore in any future session with: /context [topic]
-To continue with a fresh context window: start a new conversation and type /context [project].
+Start a new conversation and type /context [project] to resume with a fresh context window.
 ```
 
 ---
@@ -147,18 +208,26 @@ To continue with a fresh context window: start a new conversation and type /cont
 
 ### Step 1: Search
 
+**Direct mode:**
 ```bash
 python3 ~/mem.py search --query "query terms here" --limit 5
 ```
 
-If no results, try broader terms:
+**HTTP mode:**
 ```bash
-python3 ~/mem.py search --query "broader term" --limit 5
+curl -sf "http://$MEM_HOST:7823/search?query=query+terms+here&limit=5"
 ```
 
-If still no results, list all:
+If no results, try broader terms. If still nothing:
+
+**Direct mode:**
 ```bash
 python3 ~/mem.py list --limit 20
+```
+
+**HTTP mode:**
+```bash
+curl -sf "http://$MEM_HOST:7823/list?limit=20"
 ```
 
 ### Step 2: Present findings
@@ -177,8 +246,14 @@ If multiple memories are loaded: note dates (most recent wins on conflicts), syn
 
 ## /mem list
 
+**Direct mode:**
 ```bash
 python3 ~/mem.py list --limit 20
+```
+
+**HTTP mode:**
+```bash
+curl -sf "http://$MEM_HOST:7823/list?limit=20"
 ```
 
 Display results as a readable table: date, title, project, tags, word count.
@@ -203,6 +278,7 @@ A good memory lets future Claude:
 | Error | Action |
 |---|---|
 | `python3: command not found` | User needs Python 3.8+. Direct them to python.org |
-| `No such file or directory: ~/mem.py` | mem.py is not installed on the user's machine. They must install it themselves in their own terminal — Claude cannot do this. Provide these exact commands: **Mac/Linux:** `curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py` then `python3 ~/mem.py setup` — **Windows PowerShell:** `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py" -OutFile "$env:USERPROFILE\mem.py"` then `python "$env:USERPROFILE\mem.py" setup` |
+| `MODE=none` — neither direct nor HTTP works | mem.py (Mac/Linux) or mem_server.py (Windows) is not installed on the user's machine. Provide install commands from Step 0. Remind them: Claude cannot install this — they must run the commands themselves in their own terminal. **Mac/Linux:** `curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py && python3 ~/mem.py setup` **Windows:** `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem_server.py" -OutFile "$env:USERPROFILE\mem_server.py"` then `Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden` |
+| `Connection refused` on curl | mem_server.py is not running. User must start it: Windows: `Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden` — Mac/Linux: `python3 ~/mem_server.py &` |
 | `No search results` | Try simpler terms, then `/mem list` to browse all memories |
 | `ERROR: Invalid JSON` | Rebuild the JSON object carefully — check for unescaped quotes or special characters |
