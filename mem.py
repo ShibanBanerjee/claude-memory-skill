@@ -65,11 +65,15 @@ def api_base(cfg):
 
 
 def default_headers(cfg, extra=None):
+    key = cfg["supabase_anon_key"]
     h = {
-        "apikey": cfg["supabase_anon_key"],
-        "Authorization": f"Bearer {cfg['supabase_anon_key']}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
+    # Legacy anon JWT keys (eyJ...) need the apikey header.
+    # Publishable keys (sb_...) do not.
+    if not key.startswith("sb_"):
+        h["apikey"] = key
     if extra:
         h.update(extra)
     return h
@@ -304,6 +308,21 @@ def cmd_get(args):
     print(json.dumps(rows[0], indent=2))
 
 
+def cmd_delete(args):
+    cfg = load_config()
+    r = requests.delete(
+        api_base(cfg),
+        headers=default_headers(cfg),
+        params={"id": f"eq.{args.id}"},
+        timeout=15,
+    )
+    if r.status_code in (200, 204):
+        print(json.dumps({"status": "deleted", "id": args.id}))
+    else:
+        print(f"ERROR: Delete failed ({r.status_code}): {r.text}", file=sys.stderr)
+        sys.exit(1)
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -332,6 +351,9 @@ def main():
     s_get = sub.add_parser("get")
     s_get.add_argument("--id", required=True)
 
+    s_delete = sub.add_parser("delete")
+    s_delete.add_argument("--id", required=True)
+
     args = p.parse_args()
     if not args.cmd:
         p.print_help()
@@ -345,6 +367,7 @@ def main():
         "search": cmd_search,
         "list":   cmd_list,
         "get":    cmd_get,
+        "delete": cmd_delete,
     }[args.cmd](args)
 
 

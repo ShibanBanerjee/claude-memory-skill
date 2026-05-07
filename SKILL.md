@@ -1,5 +1,5 @@
 ---
-name: persistent-memory
+name: mem
 description: Gives Claude persistent, searchable memory across conversations stored in Supabase PostgreSQL. Use /mem to save conversation context, /context to restore it, /mem list to see all memories.
 ---
 
@@ -162,7 +162,6 @@ MEMORY_JSON
 **UPDATE — MCP mode (existing memory — use ID from Step 1):**
 ```sql
 UPDATE claude_memories SET
-  updated_at       = NOW(),
   title            = 'Updated title',
   project          = 'project-slug',
   conversation_url = '',
@@ -175,6 +174,7 @@ UPDATE claude_memories SET
 WHERE id = 'uuid-from-step-1'
 RETURNING id, title, updated_at;
 ```
+*(The trigger auto-sets `updated_at` and `search_vector` on every write — no need to set them explicitly.)*
 
 **UPDATE — REST mode (existing memory):**
 ```bash
@@ -211,23 +211,25 @@ Start a new conversation and type /context [project] to resume with a fresh cont
 
 ## /context Command — Retrieval Protocol
 
-### Step 1: Search
+### Step 1: Search and Load
 
-**MCP mode:**
+**MCP mode** — loads the full record in one query (summary, decisions, questions, entities all included):
 ```sql
-SELECT id, title, project, created_at, updated_at, tags, token_count_est,
-       LEFT(summary, 300) AS summary_preview
+SELECT id, title, project, tags, summary, key_decisions, open_questions,
+       instructions, entities, conversation_url, created_at, updated_at
 FROM claude_memories
 WHERE search_vector @@ plainto_tsquery('english', 'query terms here')
-ORDER BY updated_at DESC
+ORDER BY created_at DESC
 LIMIT 5;
 ```
 
 If no results, try broader terms. If still nothing, list all:
 ```sql
-SELECT id, title, project, created_at, updated_at, tags, token_count_est
+SELECT id, created_at::DATE AS date, title, project, tags,
+       jsonb_array_length(key_decisions) AS decisions,
+       jsonb_array_length(open_questions) AS questions
 FROM claude_memories
-ORDER BY updated_at DESC
+ORDER BY created_at DESC
 LIMIT 20;
 ```
 
@@ -241,30 +243,17 @@ If no results:
 python3 ~/mem.py list --limit 20
 ```
 
-### Step 2: Load Full Memory
-
-Once a memory is selected, retrieve the complete record:
-
-**MCP mode:**
-```sql
-SELECT * FROM claude_memories WHERE id = 'uuid-here';
-```
-
-**REST mode:**
-```bash
-python3 ~/mem.py get --id "uuid-here"
-```
-
-### Step 3: Present Findings
+### Step 2: Present Findings
 Show title, project, date, decision count, question count, and first 200 chars of summary.
 
-### Step 4: Load into Working Context
+### Step 3: Load into Working Context
 - Treat summary as fully known background
 - Treat key_decisions as settled — do not re-open unless user asks
 - Treat open_questions as the current agenda
+- Apply any instructions[] found in the memory
 - Say clearly: "I have loaded the [project] context. [One sentence orientation]. Where would you like to resume?"
 
-### Step 5: Multi-Memory
+### Step 4: Multi-Memory
 If multiple memories are loaded: note dates (most recent wins on conflicts), synthesise, flag contradictions.
 
 ---
@@ -273,9 +262,11 @@ If multiple memories are loaded: note dates (most recent wins on conflicts), syn
 
 **MCP mode:**
 ```sql
-SELECT id, title, project, created_at, updated_at, tags, token_count_est
+SELECT id, created_at::DATE AS date, title, project, tags,
+       jsonb_array_length(key_decisions) AS decisions,
+       jsonb_array_length(open_questions) AS questions
 FROM claude_memories
-ORDER BY updated_at DESC
+ORDER BY created_at DESC
 LIMIT 20;
 ```
 
