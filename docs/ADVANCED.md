@@ -1,55 +1,51 @@
 # Advanced Configuration
 
-## Database Location
+## Supabase Project Settings
 
-By default, the database is created at `~/.claude_memory.db`. This is set at the top of `mem.py`:
-
-```python
-DB_PATH = Path.home() / ".claude_memory.db"
-```
-
-To use a different location, edit this line before copying `mem.py` to your home directory.
+By default, `mem.py` reads credentials from `~/.claude_memory_config.json`. To use a different path, set the `CLAUDE_MEMORY_CONFIG` environment variable (requires editing `mem.py` — the variable is not checked by default, but the `CONFIG_PATH` constant at the top of the file can be pointed anywhere).
 
 ---
 
-## Backup and Restore
+## Row Level Security
 
-The entire memory store is a single SQLite file. Back it up with a standard file copy:
+The default schema disables Row Level Security (RLS) so the anon key can read and write without restrictions. For production use or multi-user setups, enable RLS and add appropriate policies:
 
-```bash
-# Backup
-cp ~/.claude_memory.db ~/backups/claude_memory_$(date +%Y%m%d).db
+```sql
+-- Enable RLS
+ALTER TABLE claude_memories ENABLE ROW LEVEL SECURITY;
 
-# Restore
-cp ~/backups/claude_memory_20260101.db ~/.claude_memory.db
-```
+-- Allow any authenticated user to read all memories
+CREATE POLICY "read_all" ON claude_memories
+  FOR SELECT USING (true);
 
-On Windows:
-```powershell
-Copy-Item "$env:USERPROFILE\.claude_memory.db" "$env:USERPROFILE\backups\claude_memory_backup.db"
+-- Allow insert and update only with a valid service role key
+CREATE POLICY "write_service" ON claude_memories
+  FOR ALL USING (auth.role() = 'service_role');
 ```
 
 ---
 
 ## Exporting Memories
 
-Export all memories as JSON:
+Export all memories as JSON using mem.py:
 
 ```bash
 python3 ~/mem.py list --limit 10000 > memories_export.json
 ```
 
----
+Or query Supabase directly in the SQL Editor:
 
-## Inspecting the Database Directly
-
-The `.db` file is a standard SQLite database. Open it with any SQLite browser or the `sqlite3` CLI:
-
-```bash
-sqlite3 ~/.claude_memory.db
+```sql
+SELECT * FROM claude_memories ORDER BY updated_at DESC;
 ```
 
-Useful queries:
+Use the Supabase Dashboard → Table Editor → Export CSV for spreadsheet-friendly output.
+
+---
+
+## Querying Directly in Supabase
+
+The Supabase SQL Editor gives you direct access to all stored memories:
 
 ```sql
 -- Count all memories
@@ -59,32 +55,61 @@ SELECT COUNT(*) FROM claude_memories;
 SELECT id, title, created_at FROM claude_memories WHERE project = 'my-project';
 
 -- Full-text search
-SELECT title, project FROM claude_memories_fts WHERE claude_memories_fts MATCH 'architecture';
+SELECT title, project
+FROM claude_memories
+WHERE search_vector @@ plainto_tsquery('english', 'architecture database');
 
--- Manual keyword search
-SELECT title, project FROM claude_memories WHERE summary LIKE '%auth service%';
+-- Tag search (exact match on any tag in array)
+SELECT title, project
+FROM claude_memories
+WHERE 'auth' = ANY(tags);
+
+-- Most recent memories
+SELECT id, title, project, updated_at
+FROM claude_memories
+ORDER BY updated_at DESC
+LIMIT 10;
 ```
 
 ---
 
-## Rebuilding the FTS Index
+## Rebuilding the Search Index
 
-If the full-text search index becomes out of sync (unusual, but possible after a crash mid-write), rebuild it:
+If the `search_vector` column gets out of sync (possible after a bulk data import that bypassed the trigger), rebuild it:
 
-```bash
-sqlite3 ~/.claude_memory.db "INSERT INTO claude_memories_fts(claude_memories_fts) VALUES('rebuild');"
+```sql
+UPDATE claude_memories SET updated_at = updated_at;
 ```
+
+This touches every row and re-fires the `BEFORE UPDATE` trigger, which repopulates `search_vector` for each record.
 
 ---
 
-## Semantic Search (Roadmap)
+## pgvector Semantic Search (Roadmap)
 
-The current FTS5 search finds memories by keyword. A planned future feature will add semantic search — finding memories by meaning rather than exact terms, using local embedding models to keep all data on-device. Track progress in the GitHub issues.
+The current search finds memories by keyword match against the `search_vector` TSVECTOR column. A planned future feature will add semantic search using pgvector — finding memories by meaning rather than exact terms. See `scripts/schema_pgvector.sql` for the draft schema.
 
 ---
 
 ## Team Memories
 
-For shared team memories, the simplest approach is to point `DB_PATH` in `mem.py` to a shared network path accessible by all team members. Because SQLite supports WAL mode concurrent access, multiple readers and a single writer can coexist safely over a network share.
+For shared team memories, point every team member's `~/.claude_memory_config.json` at the same Supabase project. All team members write to and read from the shared `claude_memories` table. Use the `project` field to namespace memories by team, initiative, or individual if needed.
 
-For higher-throughput team scenarios, swap the `mem.py` storage backend for a lightweight PostgreSQL or MySQL instance while keeping the same JSON interface between SKILL.md and mem.py unchanged.
+For stricter isolation, enable RLS with per-user policies, or use separate Supabase projects per team.
+
+---
+
+## Backing Up Your Memories
+
+Supabase automatically backs up your database on paid plans. For manual backups, export via the SQL Editor or use the Supabase CLI:
+
+```bash
+supabase db dump --linked > claude_memories_backup.sql
+```
+
+To restore:
+```bash
+supabase db push --linked < claude_memories_backup.sql
+```
+
+Or restore individual records by re-running the INSERT statements from the export.

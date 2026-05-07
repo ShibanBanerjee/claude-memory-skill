@@ -1,292 +1,200 @@
-# 🧠 Claude Memory Skill
+# claude-memory-skill
 
-> **Persistent, searchable memory for Claude — stored locally on your machine. Works on Mac, Linux, and Windows.**
+Persistent, searchable memory for Claude — across every conversation, every device, every interface.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Claude Skills](https://img.shields.io/badge/Claude-Skill-blueviolet)](https://github.com/anthropics/skills) [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org) [![SQLite](https://img.shields.io/badge/Storage-SQLite-green)](https://sqlite.org) [![Version](https://img.shields.io/badge/version-2.1.0-blue)](CHANGELOG.md) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+Type `/mem` to save what you're working on. Type `/context [topic]` in any future conversation to pick up exactly where you left off. Everything is stored in your own Supabase PostgreSQL database.
 
-**Type `/mem` to save. Type `/context` to restore.**
-
-No accounts. No cloud. No configuration. Everything stays on your machine.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Claude Skills](https://img.shields.io/badge/Claude-Skill-blueviolet)](https://github.com/anthropics/skills) [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org) [![Supabase](https://img.shields.io/badge/Storage-Supabase-green)](https://supabase.com) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
-## ⚠️ Security Notice
+## How it works
 
-This skill runs Python scripts on your local machine via `bash_tool`. Only install skills from sources you trust. `mem.py` and `mem_server.py` are pure Python standard library — zero external dependencies. All they do is read and write a local SQLite file.
+Two slash commands:
+
+**`/mem`** — Claude reads the full conversation, extracts a structured memory (decisions, open questions, key entities, 1,500–4,000 word summary), and stores it in Supabase. If a memory for this project already exists, it updates rather than duplicates.
+
+**`/context [topic]`** — Claude searches your stored memories by topic, loads the matching record into its working context, and resumes from the open questions without you having to re-explain anything.
+
+The skill uses Supabase MCP as the primary storage path (no local setup needed) and falls back to a lightweight Python REST client if MCP is not configured.
 
 ---
 
 ## Prerequisites
 
-| Requirement | Detail |
-|---|---|
-| **Claude plan** | Pro, Max, Team, or Enterprise. **Skills are not available on the free tier.** |
-| **Platform** | Claude Desktop (macOS, Windows, Linux) · Claude.ai web · Claude Code |
-| **Python** | 3.8 or higher — standard library only, no pip installs |
+- A [Supabase](https://supabase.com) account (free tier works fine)
+- Claude Pro, Max, Team, or Enterprise
 
 ---
 
-## The Problem This Solves
+## Setup
 
-You spend three hours in a deep product brainstorm with Claude. Fifteen critical decisions. Four frameworks applied. A full strategy mapped with nuance that took hours to develop. Then you open a new conversation — and Claude knows nothing. Claude even starts forgetting earlier parts of the same long running conversation. It starts hallucinating in long running conversations, missing key details.
+### Step 1: Create the database table
 
-Claude Memory fixes this. One command saves everything. One command restores it in any future session, in any conversation. You can even load more than one memory in a new conversation, giving you the superpower to reference the details of multiple earlier conversations in a single session without overflooding your context window.
+Open your Supabase project → SQL Editor → New Query. Paste the contents of `schema.sql` and run it. This creates the `claude_memories` table with full-text search, JSONB fields, and the required indexes.
 
----
+### Step 2: Connect Claude to Supabase
 
-## ⚠️ How This Actually Works — Read This First
+**Option A — Supabase MCP (recommended):**
 
-Claude Desktop uses `bash_tool` to run commands. On **Mac and Linux**, bash_tool runs directly on your real machine — so `mem.py` works via direct Python calls. On **Windows**, bash_tool runs inside an isolated Linux container that cannot touch your Windows filesystem — so a lightweight local HTTP server (`mem_server.py`) bridges the gap.
+Add the Supabase MCP integration to Claude's settings. Once connected, Claude can run SQL directly against your database — no local files, no credentials to manage. Works on every device including Windows.
 
-The SKILL.md auto-detects which mode to use. You do not need to configure anything.
+**Option B — mem.py REST fallback:**
 
-**Critical:** Claude cannot install these files for you. You must run the install commands yourself in your own terminal. Anything Claude installs disappears when the conversation ends.
+For environments without MCP, install the Python helper:
 
----
-
-## How It Works
-
-```
-Your Conversation (hours of work)
-         |
-         |  /mem "My Project"
-         v
-Claude Memory Skill
-  1. Auto-detects: direct python3 (Mac/Linux) or HTTP server (Windows)
-  2. Reads the ENTIRE conversation from start to finish
-  3. Generates detailed summary (1,500–4,000 words)
-  4. Extracts: decisions + WHY, rejected ideas, open questions, entities, tags
-  5. If memory exists for this project → UPDATES it
-     If no memory exists → INSERTS new entry
-     One clean memory per project. No duplicates.
-         |
-         v
-~/.claude_memory.db  (SQLite — on your machine)
-Your data. Your machine. Your control.
-         |
-         |  New conversation, any time later
-         |  /context "project name"
-         v
-Claude, fully restored — decisions locked, agenda set, ready to continue
-```
-
----
-
-## Quick Start
-
-### Mac / Linux
-
-**Step 1 — Install mem.py:**
 ```bash
+# Mac / Linux
 curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py
+pip install requests
+```
+
+Create `~/.claude_memory_config.json`:
+```json
+{
+  "supabase_url": "https://your-project.supabase.co",
+  "supabase_anon_key": "your-anon-key"
+}
+```
+
+```bash
 python3 ~/mem.py setup
 ```
 
-Expected:
-```
-✅ Claude Memory — local database ready
-   Location: /home/you/.claude_memory.db
-   Memories stored: 0
+On Windows (PowerShell):
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py" -OutFile "$env:USERPROFILE\mem.py"
+pip install requests
+python "$env:USERPROFILE\mem.py" setup
 ```
 
-**Step 2 — Install the skill in Claude:**
-- **Claude Desktop / Claude.ai:** Settings → Skills → Add Custom Skill → upload `SKILL.md`
-- **Claude Code:** `mkdir -p ~/.claude/skills/claude-memory && curl -o ~/.claude/skills/claude-memory/SKILL.md https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/SKILL.md`
+Your Supabase URL and anon key are in: Project Settings → API.
 
-**Step 3 — Use it:**
-```
-/mem "My Project"     # Save current conversation
-/context my project   # Restore in any future session
-/mem list             # Browse all saved memories
+### Step 3: Install the skill
+
+**Claude Desktop / Claude.ai:** Settings → Skills → Add Custom Skill → upload `SKILL.md`
+
+**Claude Code:**
+```bash
+mkdir -p ~/.claude/skills/claude-memory
+cp SKILL.md ~/.claude/skills/claude-memory/SKILL.md
 ```
 
 ---
 
-### Windows
+## Usage
 
-Windows requires a local HTTP server because Claude Desktop's bash tool runs in an isolated Linux container that cannot access your Windows filesystem. `mem_server.py` runs on your real machine and Claude reaches it over localhost.
+### Saving a conversation
 
-**Step 1 — Download and start the server (run this in PowerShell, once):**
-```powershell
-# Download
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem_server.py" -OutFile "$env:USERPROFILE\mem_server.py"
-
-# Start in background (hidden window)
-Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden
-
-# Verify it's running
-Invoke-WebRequest -Uri "http://localhost:7823/health" | Select-Object -ExpandProperty Content
+At any point in a conversation, type:
+```
+/mem
 ```
 
-Expected:
-```json
-{"status": "ok", "db": "C:\\Users\\you\\.claude_memory.db", "memories": 0, "version": "2.1.0"}
+Claude saves it with an auto-generated title. For a specific title:
+```
+/mem Backend Architecture — Microservices Decision
+/mem Devam Strategy Session May 2026
 ```
 
-**Step 2 — Auto-start on login (optional but recommended):**
-```powershell
-$action  = New-ScheduledTaskAction -Execute "python" -Argument "$env:USERPROFILE\mem_server.py"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-Register-ScheduledTask -TaskName "ClaudeMemoryServer" -Action $action -Trigger $trigger -RunLevel Highest
+If a memory for this project already exists, it's updated rather than duplicated. Run `/mem` at any point in a long session to checkpoint, and again at the end — you'll always have one clean, comprehensive record.
+
+### Restoring context
+
+Open a new conversation and type:
+```
+/context backend architecture
+/context devam strategy
+/context auth service
 ```
 
-**Step 3 — Install the skill in Claude Desktop:**
-Settings → Skills → Add Custom Skill → upload `SKILL.md`
+Claude searches across title, project, summary, and tags simultaneously. It loads the matching memory and says "I have loaded the [project] context. [Orientation]. Where would you like to resume?" — no re-explaining needed.
 
-**Step 4 — Use it (same commands as Mac/Linux):**
+### Listing all memories
+
 ```
-/mem "My Project"
-/context my project
 /mem list
 ```
 
-For detailed Windows instructions see [docs/WINDOWS.md](docs/WINDOWS.md).
+Returns all saved memories with title, project, date, tags, and word count.
 
 ---
 
-## Commands
+## What gets stored
 
-| Command | Action |
-|---|---|
-| `/mem [title]` | Save current conversation. Updates existing memory for this project if one exists — no duplicates. |
-| `/mem list` | List all saved memories |
-| `/context [query]` | Search and restore memory by topic |
-| `/context id:[uuid]` | Retrieve specific memory by ID |
-| `/recall [query]` | Alias for `/context` |
+Each memory entry captures:
 
----
+- **Summary** — 1,500 to 4,000 words. Every significant decision, the reasoning behind it, every idea considered and rejected, all specific numbers and names, current status, next steps, standing instructions.
+- **Key decisions** — structured list, each entry including what was decided, why, and what was rejected
+- **Open questions** — specific, actionable items that form the agenda for the next session
+- **Entities** — people, products, companies, concepts, documents referenced in the conversation
+- **Tags** — 5–10 searchable terms for future retrieval
 
-## What Gets Saved
-
-Not a compressed summary. A complete, lossless record:
-
-- **Summary** (1,500–4,000 words): Full narrative of everything discussed
-- **Key decisions**: What was decided, WHY, and what was REJECTED with reasons
-- **Open questions**: Specific, actionable next steps
-- **Entities**: All named people, products, companies, tools, documents
-- **Tags**: Auto-extracted for searchability
-
-A decision without its reasoning is half-useless. A rejected option without its rejection reason is dangerous — future Claude might re-propose it.
+The compression philosophy is lossless: a 3,000 word summary uses roughly 750 tokens when loaded into context — a trivial cost compared to the value of not losing a full session of work.
 
 ---
 
-## Architecture
+## Repository layout
 
 ```
-claude-memory-skill/
-├── SKILL.md                    Upload this to Claude (auto-detects platform)
-├── mem.py                      Mac/Linux: copy to ~/mem.py
-├── mem_server.py               Windows: copy to %USERPROFILE%\mem_server.py
-├── schema.sql                  SQLite schema reference
-├── scripts/
-│   ├── start_mem_server.sh     Mac/Linux server startup script
-│   ├── start_mem_server.ps1    Windows server startup script
-│   ├── setup.sh                Mac/Linux full install script
-│   ├── setup.ps1               Windows full install script
-│   └── verify.py               End-to-end installation checker
-├── references/
-│   ├── STORAGE_SPEC.md
-│   ├── RETRIEVAL_SPEC.md
-│   └── QUALITY_RUBRIC.md
-├── examples/
-│   ├── example_memory.json
-│   ├── example_retrieval.md
-│   └── example_workflow.md
-├── tests/
-│   ├── run_all_tests.py
-│   ├── test_connection.py
-│   ├── test_storage.py
-│   └── test_search.py
-└── docs/
-    ├── WINDOWS.md              Full Windows setup guide
-    ├── SETUP.md                Detailed Mac/Linux guide
-    ├── ADVANCED.md             Advanced configuration
-    ├── TROUBLESHOOTING.md      Common issues and fixes
-    └── API_REFERENCE.md        CLI + HTTP API reference
+SKILL.md                   Skill definition — upload this to Claude
+schema.sql                 PostgreSQL schema — run once in Supabase SQL Editor
+mem.py                     Python REST helper (fallback, requires pip install requests)
+scripts/
+  mem.py                   Same as root mem.py — for setup scripts
+  schema.sql               Same as root schema.sql — for setup scripts
+  setup.sh                 Mac/Linux automated setup
+  setup.ps1                Windows PowerShell automated setup
+  verify.py                Installation checker
+  schema_pgvector.sql      Future: semantic search schema (not yet active)
+docs/
+  SETUP.md                 Detailed setup guide
+  ADVANCED.md              Custom configuration and data management
+  commands.md              Full command reference
+  API_REFERENCE.md         mem.py CLI and PostgREST API reference
+  TROUBLESHOOTING.md       Common issues and solutions
+  architecture.md          How the skill works internally
+references/
+  MCP_REFERENCE.md         Supabase MCP SQL quick reference
+  STORAGE_SPEC.md          Memory field specifications and quality standards
+  RETRIEVAL_SPEC.md        Context restoration protocol
+  QUALITY_RUBRIC.md        What makes a good memory entry
+examples/
+  example_memory.json      Sample stored memory record
+  example_workflow.md      End-to-end save and restore walkthrough
+  example_retrieval.md     Context retrieval example
+tests/
+  test_connection.py       Supabase connection test
+  test_storage.py          Write/read/delete round-trip test
+  test_search.py           Full-text search quality test
+  run_all_tests.py         Run all tests
 ```
-
-**Storage:** `~/.claude_memory.db` on Mac/Linux · `C:\Users\you\.claude_memory.db` on Windows. SQLite with FTS5 full-text search. Auto-created on first run.
 
 ---
 
-## Data Privacy
-
-Your data never leaves your machine. No external services. Delete any memory or the entire database at any time.
+## Running the tests
 
 ```bash
-# Back up
-cp ~/.claude_memory.db ~/claude_memory_backup.db
-
-# Export all as JSON
-python3 ~/mem.py list --limit 10000
+# Requires ~/.claude_memory_config.json with valid Supabase credentials
+python3 tests/run_all_tests.py
 ```
 
----
-
-## FAQ
-
-**Does this work on the free Claude plan?**
-No. Skills require Pro, Max, Team, or Enterprise.
-
-**Will memories persist across Claude updates?**
-Yes. The database is completely independent of Claude. Reinstalling Claude has no effect.
-
-**Can I load more than one memory in a single conversation?**
-Yes. Use `/context` multiple times. Claude synthesises them and flags any contradictions. This is one of the most powerful features — reference multiple past conversations without overflowing your context window.
-
-**What happens if I run `/mem` on a project I've already saved?**
-It updates the existing record additively. Nothing is lost.
-
-**Why do I need `mem_server.py` on Windows but not Mac?**
-Claude Desktop on Windows runs bash_tool inside a Linux container that cannot access your Windows filesystem. `mem_server.py` runs on your real machine and Claude reaches it over HTTP. Mac/Linux bash_tool runs on the real filesystem directly, so no server is needed.
-
-**The server was running but stopped after a reboot. What do I do?**
-Add it to Task Scheduler using the command in Step 2 of the Windows Quick Start above.
-
----
-
-## Troubleshooting
-
-**`mem.py isn't installed yet` (Mac/Linux)**
-Run `curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py && python3 ~/mem.py setup` in your own terminal.
-
-**`Connection refused` on Windows**
-`mem_server.py` is not running. Open PowerShell and run: `Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden`
-
-**`python3: command not found`**
-Install Python 3.8+ from [python.org](https://python.org). On Windows use `python` instead of `python3`.
-
-**`No search results`**
-Try simpler terms, then `/mem list` to browse all saved memories.
-
-Full troubleshooting guide: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+Or run individual checks:
+```bash
+python3 tests/test_connection.py
+python3 scripts/verify.py
+```
 
 ---
 
 ## Roadmap
 
-- [x] Full-text search (SQLite FTS5)
-- [x] Local SQLite storage — zero setup, no accounts
-- [x] Upsert logic — one memory per project, no duplicates
-- [x] Lossless storage (1,500–4,000 word summaries)
-- [x] Multi-memory loading in a single session
-- [x] Windows support via local HTTP server
-- [ ] Semantic search with local embeddings
-- [ ] Export to Markdown and Obsidian
-- [ ] Memory merging across projects
+- Semantic search using pgvector (find memories by meaning, not just keywords)
+- Memory expiry and archival policies
+- Multi-project context loading in a single `/context` call
 
 ---
 
 ## Contributing
 
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
----
-
-*Built by [Shiban Banerjee](https://github.com/shibanbanerjee) — Co-Founder and Chief AI Officer at Zyra*
+See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports, documentation improvements, and pull requests are welcome.

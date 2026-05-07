@@ -1,85 +1,113 @@
-# mem.py Quick Reference
+# Supabase MCP SQL Quick Reference
 
-All Claude memory operations go through `mem.py`. The script reads JSON from stdin and writes JSON to stdout. The database lives at `~/.claude_memory.db` and is created automatically on first use.
+All SQL commands Claude uses when the Supabase MCP (`execute_sql`) tool is available.
 
 ---
 
-## Check if a project memory exists
+## Check if project memory exists
 
-```bash
-python3 ~/mem.py check --project "project-slug"
+```sql
+SELECT id, title, created_at, updated_at
+FROM claude_memories
+WHERE project = 'project-slug'
+ORDER BY updated_at DESC
+LIMIT 1;
 ```
 
-Returns `{"exists": true, "id": "...", ...}` or `{"exists": false}`.
+Returns a row (exists) or empty result (not found).
 
 ---
 
 ## Store a new memory
 
-```bash
-python3 ~/mem.py store << 'MEMORY_JSON'
-{
-  "title": "...",
-  "project": "project-slug",
-  "summary": "...",
-  "tags": ["tag1", "tag2"],
-  "key_decisions": ["Decision 1 — reason — rejected alternative"],
-  "open_questions": ["Specific open question with context"],
-  "entities": {"people": [], "products": [], "companies": [], "concepts": [], "documents": []},
-  "token_count_est": 0
-}
-MEMORY_JSON
+```sql
+INSERT INTO claude_memories
+  (title, project, conversation_url, summary,
+   key_decisions, open_questions, entities, tags, token_count_est)
+VALUES (
+  'Title here',
+  'project-slug',
+  '',
+  'Full summary text...',
+  '["Decision 1 — reason", "Decision 2 — reason"]'::jsonb,
+  '["Open question 1", "Open question 2"]'::jsonb,
+  '{"people": [], "products": [], "companies": [], "concepts": [], "documents": []}'::jsonb,
+  ARRAY['tag1', 'tag2', 'tag3'],
+  450
+)
+RETURNING id, title, created_at;
 ```
 
 ---
 
 ## Update an existing memory
 
-```bash
-python3 ~/mem.py update --id "uuid-here" << 'MEMORY_JSON'
-{
-  "title": "...",
-  "project": "project-slug",
-  "summary": "...",
-  "tags": [...],
-  "key_decisions": [...],
-  "open_questions": [...],
-  "entities": {...},
-  "token_count_est": 0
-}
-MEMORY_JSON
+```sql
+UPDATE claude_memories SET
+  updated_at       = NOW(),
+  title            = 'Updated title',
+  project          = 'project-slug',
+  conversation_url = '',
+  summary          = 'Full updated summary...',
+  key_decisions    = '["Decision 1", "Decision 2"]'::jsonb,
+  open_questions   = '["Open question 1"]'::jsonb,
+  entities         = '{"people": [], "products": [], "companies": [], "concepts": [], "documents": []}'::jsonb,
+  tags             = ARRAY['tag1', 'tag2'],
+  token_count_est  = 450
+WHERE id = 'uuid-from-check'
+RETURNING id, title, updated_at;
 ```
 
 ---
 
-## Search memories
+## Search by full-text
 
-```bash
-python3 ~/mem.py search --query "search terms here" --limit 5
-python3 ~/mem.py search --query "auth decisions" --project "backend" --limit 3
+```sql
+SELECT id, title, project, created_at, updated_at, tags, token_count_est,
+       LEFT(summary, 300) AS summary_preview
+FROM claude_memories
+WHERE search_vector @@ plainto_tsquery('english', 'search terms here')
+ORDER BY updated_at DESC
+LIMIT 5;
 ```
 
 ---
 
-## List recent memories
+## List all memories
 
-```bash
-python3 ~/mem.py list --limit 20
-python3 ~/mem.py list --project "my-project" --limit 10
+```sql
+SELECT id, title, project, created_at, updated_at, tags, token_count_est
+FROM claude_memories
+ORDER BY updated_at DESC
+LIMIT 20;
 ```
 
 ---
 
-## Get by ID
+## Get full record by ID
 
-```bash
-python3 ~/mem.py get --id "uuid-here"
+```sql
+SELECT * FROM claude_memories WHERE id = 'uuid-here';
 ```
 
 ---
 
-## Initialise / status check
+## Search by tag
 
-```bash
-python3 ~/mem.py setup
+```sql
+SELECT id, title, project, updated_at
+FROM claude_memories
+WHERE 'tag-name' = ANY(tags)
+ORDER BY updated_at DESC;
+```
+
+---
+
+## Count memories by project
+
+```sql
+SELECT project, COUNT(*) AS count
+FROM claude_memories
+GROUP BY project
+ORDER BY count DESC;
 ```

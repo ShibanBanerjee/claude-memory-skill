@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run all tests."""
-import subprocess, sys
+"""Run all tests. Requires ~/.claude_memory_config.json with valid Supabase credentials."""
+import subprocess
+import sys
 
 tests = [
     ("Connection", "tests/test_connection.py"),
-    ("Storage", "tests/test_storage.py"),
-    ("Search", "tests/test_search.py"),
+    ("Storage",    "tests/test_storage.py"),
+    ("Search",     "tests/test_search.py"),
 ]
 
 passed = failed = 0
@@ -17,8 +18,9 @@ for name, path in tests:
         passed += 1
     else:
         failed += 1
-        if result.stderr: print("STDERR:", result.stderr.strip())
+        if result.stderr:
+            print("STDERR:", result.stderr.strip())
 
-print(f"\n{'='*40}")
+print(f"\n{'=' * 40}")
 print(f"Results: {passed} passed, {failed} failed")
 sys.exit(0 if failed == 0 else 1)

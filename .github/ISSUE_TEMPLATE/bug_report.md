@@ -18,19 +18,19 @@ labels: bug
 ## Environment
 
 - OS: [e.g. Windows 11, macOS 14, Ubuntu 22.04]
-- Python version: [e.g. 3.11]
-- SQLite version: [run `python3 -c "import sqlite3; print(sqlite3.sqlite_version)"`]
-- Claude interface: [Claude.ai / Claude Code / API]
+- Python version: [e.g. 3.11 — run `python3 --version`]
+- requests version: [run `pip show requests`]
+- Claude interface: [Claude.ai / Claude Code / Claude Desktop]
 - Skill version: [check CHANGELOG.md]
+- Connection mode: [MCP / mem.py REST]
+
+## Supabase config (redact your actual keys)
+
+- Supabase URL format: [e.g. `https://abcdefgh.supabase.co` — keep it, no key needed]
+- mem.py setup output: [run `python3 ~/mem.py setup` and paste the output]
 
 ## Error output
 
 ```
 paste error here
-```
-
-## mem.py setup output
-
-```
-paste the output of: python3 ~/mem.py setup
 ```

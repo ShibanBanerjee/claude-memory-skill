@@ -1,15 +1,13 @@
 ---
 name: persistent-memory
-description: Gives Claude persistent, searchable memory across conversations stored locally on your machine. Use /mem to save conversation context, /context to restore it, /mem list to see all memories.
+description: Gives Claude persistent, searchable memory across conversations stored in Supabase PostgreSQL. Use /mem to save conversation context, /context to restore it, /mem list to see all memories.
 ---
 
 # Claude Memory Skill — /mem and /context
 
 ## What This Skill Does
 
-Gives Claude persistent, searchable memory across conversations. All data is stored in a local SQLite database on your machine — no accounts, no cloud services.
-
-Works on **Mac, Linux, and Windows**.
+Gives Claude persistent, searchable memory across conversations. All data is stored in your Supabase PostgreSQL database — accessible from every device, every Claude interface, every conversation.
 
 **Trigger words:**
 - `/mem` `/mem [title]` `/memory` `/remember this` — save conversation to memory
@@ -20,85 +18,70 @@ Works on **Mac, Linux, and Windows**.
 
 ## Step 0: Detect Connection Mode — Run at the Start of Every Session
 
-Before anything else, detect which mode to use. Run this exact block:
+Before anything else, detect which connection mode is available.
 
-```bash
-# Try direct mode first (Mac/Linux with mem.py at ~/mem.py)
-if python3 ~/mem.py setup 2>/dev/null | grep -q "ready\|Memories"; then
-  echo "MODE=direct"
-else
-  # Try HTTP server mode (Windows, or Mac/Linux running mem_server.py)
-  MEM_HOST=""
-  for host in localhost host.docker.internal 172.17.0.1 172.18.0.1; do
-    if curl -sf --max-time 2 "http://$host:7823/health" 2>/dev/null | grep -q "ok"; then
-      MEM_HOST="$host"
-      echo "MODE=http HOST=$host"
-      break
-    fi
-  done
-  if [ -z "$MEM_HOST" ]; then
-    echo "MODE=none"
-  fi
-fi
+**Try MCP mode first** — run this SQL using the `execute_sql` tool (Supabase MCP):
+```sql
+SELECT COUNT(*) FROM claude_memories;
 ```
 
-**If MODE=direct** → use all `python3 ~/mem.py ...` commands below.
-**If MODE=http** → use all `curl http://$MEM_HOST:7823/...` commands below.
-**If MODE=none** → mem.py is not installed. Tell the user:
+- If it returns a count → **MODE=mcp**. Use the SQL commands in this skill.
+- If it errors → **Try REST mode**: run `python3 ~/mem.py setup`
+  - If it prints "Claude Memory — Supabase ready" → **MODE=rest**. Use the `python3 ~/mem.py` commands.
+  - If it errors → **MODE=none**
 
-> `mem.py` or `mem_server.py` is not installed on your machine yet. Open your own terminal (not this chat) and run:
+**If MODE=none**, tell the user:
+
+> Memory storage is not configured. You have two options:
 >
-> **Mac/Linux:**
-> ```bash
-> curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py
-> python3 ~/mem.py setup
-> ```
+> **Option 1 — Supabase MCP (recommended):**
+> Add the Supabase MCP integration to your Claude settings. Once configured, `/mem` works everywhere without any local setup.
 >
-> **Windows PowerShell:**
-> ```powershell
-> Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem_server.py" -OutFile "$env:USERPROFILE\mem_server.py"
-> Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden
-> ```
-> Then try your command again.
+> **Option 2 — mem.py REST fallback:**
+> 1. [Create a free Supabase project](https://supabase.com) and run `schema.sql` in the SQL Editor.
+> 2. Create `~/.claude_memory_config.json`:
+>    ```json
+>    {"supabase_url": "https://xxx.supabase.co", "supabase_anon_key": "your-key"}
+>    ```
+> 3. `curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py && pip install requests`
+>
+> See [INSTALL.md](https://github.com/ShibanBanerjee/claude-memory-skill/blob/main/INSTALL.md) for full instructions.
 
 ---
 
 ## /mem Command — Full Execution Protocol
 
-### Step 1: Check for existing memory — UPSERT LOGIC
+### Step 1: Check for Existing Memory — Upsert Logic
 
-Derive a `project` slug from the conversation topic (lowercase, hyphen-separated, e.g. `backend-rewrite`, `devam-strategy`, `personal`).
+Derive a `project` slug from the conversation topic (lowercase, hyphenated, e.g. `backend-rewrite`, `devam-strategy`, `personal`).
 
-**Direct mode:**
+**MCP mode:**
+```sql
+SELECT id, title, created_at, updated_at
+FROM claude_memories
+WHERE project = 'project-slug'
+ORDER BY updated_at DESC
+LIMIT 1;
+```
+
+**REST mode:**
 ```bash
 python3 ~/mem.py check --project "project-slug"
 ```
 
-**HTTP mode:**
-```bash
-curl -sf "http://$MEM_HOST:7823/check?project=project-slug"
-```
-
-Response when a memory exists:
-```json
-{"exists": true, "id": "uuid", "title": "...", "created_at": "...", "updated_at": "..."}
-```
-
-Response when none exists:
-```json
-{"exists": false}
-```
+Response when a memory exists: `{"exists": true, "id": "uuid", "title": "...", ...}`
+Response when none exists: `{"exists": false}`
 
 **If exists → UPDATE path (Step 4 update). If not → INSERT path (Step 4 store).**
 The updated memory must include everything from the previous version PLUS everything new — nothing is lost.
 
 ---
 
-### Step 2: Generate the detailed memory — NO LOSSY COMPRESSION
+### Step 2: Generate the Detailed Memory — No Lossy Compression
 
-Read the entire conversation from beginning to end. Do not skim. Your goal is LOSSLESS CAPTURE — not token minimisation.
+Read the entire conversation from beginning to end. Do not skim. Goal: LOSSLESS CAPTURE.
 
-Target summary length: **1,500 to 4,000 words.**
+**Target summary length: 1,500 to 4,000 words.**
 
 The summary must contain ALL of the following:
 1. Project/topic overview from scratch — what this is, why it matters
@@ -150,32 +133,54 @@ The summary must contain ALL of the following:
 
 ### Step 4: Store or Update
 
-**STORE — Direct mode (new memory):**
+**STORE — MCP mode (new memory):**
+```sql
+INSERT INTO claude_memories
+  (title, project, conversation_url, summary,
+   key_decisions, open_questions, entities, tags, token_count_est)
+VALUES (
+  'Title here',
+  'project-slug',
+  '',
+  'Full summary text here...',
+  '["Decision 1 — reason", "Decision 2 — reason"]'::jsonb,
+  '["Open question 1", "Open question 2"]'::jsonb,
+  '{"people": [], "products": [], "companies": [], "concepts": [], "documents": []}'::jsonb,
+  ARRAY['tag1', 'tag2', 'tag3'],
+  450
+)
+RETURNING id, title, created_at;
+```
+
+**STORE — REST mode (new memory):**
 ```bash
 python3 ~/mem.py store << 'MEMORY_JSON'
 { ...json from Step 3... }
 MEMORY_JSON
 ```
 
-**STORE — HTTP mode (new memory):**
-```bash
-curl -sf -X POST "http://$MEM_HOST:7823/store" \
-  -H "Content-Type: application/json" \
-  -d '{ ...json from Step 3... }'
+**UPDATE — MCP mode (existing memory — use ID from Step 1):**
+```sql
+UPDATE claude_memories SET
+  updated_at       = NOW(),
+  title            = 'Updated title',
+  project          = 'project-slug',
+  conversation_url = '',
+  summary          = 'Full updated summary...',
+  key_decisions    = '["Decision 1", "Decision 2"]'::jsonb,
+  open_questions   = '["Open question 1"]'::jsonb,
+  entities         = '{"people": [], "products": [], "companies": [], "concepts": [], "documents": []}'::jsonb,
+  tags             = ARRAY['tag1', 'tag2'],
+  token_count_est  = 450
+WHERE id = 'uuid-from-step-1'
+RETURNING id, title, updated_at;
 ```
 
-**UPDATE — Direct mode (existing memory, use ID from Step 1):**
+**UPDATE — REST mode (existing memory):**
 ```bash
 python3 ~/mem.py update --id "uuid-from-step-1" << 'MEMORY_JSON'
 { ...json from Step 3... }
 MEMORY_JSON
-```
-
-**UPDATE — HTTP mode (existing memory):**
-```bash
-curl -sf -X POST "http://$MEM_HOST:7823/update?id=uuid-from-step-1" \
-  -H "Content-Type: application/json" \
-  -d '{ ...json from Step 3... }'
 ```
 
 Expected responses:
@@ -186,7 +191,7 @@ Expected responses:
 
 ---
 
-### Step 5: Confirm to user
+### Step 5: Confirm to User
 
 ```
 ✅ Memory saved. [UPDATED existing | NEW entry]
@@ -208,52 +213,75 @@ Start a new conversation and type /context [project] to resume with a fresh cont
 
 ### Step 1: Search
 
-**Direct mode:**
+**MCP mode:**
+```sql
+SELECT id, title, project, created_at, updated_at, tags, token_count_est,
+       LEFT(summary, 300) AS summary_preview
+FROM claude_memories
+WHERE search_vector @@ plainto_tsquery('english', 'query terms here')
+ORDER BY updated_at DESC
+LIMIT 5;
+```
+
+If no results, try broader terms. If still nothing, list all:
+```sql
+SELECT id, title, project, created_at, updated_at, tags, token_count_est
+FROM claude_memories
+ORDER BY updated_at DESC
+LIMIT 20;
+```
+
+**REST mode:**
 ```bash
 python3 ~/mem.py search --query "query terms here" --limit 5
 ```
 
-**HTTP mode:**
-```bash
-curl -sf "http://$MEM_HOST:7823/search?query=query+terms+here&limit=5"
-```
-
-If no results, try broader terms. If still nothing:
-
-**Direct mode:**
+If no results:
 ```bash
 python3 ~/mem.py list --limit 20
 ```
 
-**HTTP mode:**
-```bash
-curl -sf "http://$MEM_HOST:7823/list?limit=20"
+### Step 2: Load Full Memory
+
+Once a memory is selected, retrieve the complete record:
+
+**MCP mode:**
+```sql
+SELECT * FROM claude_memories WHERE id = 'uuid-here';
 ```
 
-### Step 2: Present findings
+**REST mode:**
+```bash
+python3 ~/mem.py get --id "uuid-here"
+```
+
+### Step 3: Present Findings
 Show title, project, date, decision count, question count, and first 200 chars of summary.
 
-### Step 3: Load into working context
+### Step 4: Load into Working Context
 - Treat summary as fully known background
 - Treat key_decisions as settled — do not re-open unless user asks
 - Treat open_questions as the current agenda
 - Say clearly: "I have loaded the [project] context. [One sentence orientation]. Where would you like to resume?"
 
-### Step 4: Multi-memory
+### Step 5: Multi-Memory
 If multiple memories are loaded: note dates (most recent wins on conflicts), synthesise, flag contradictions.
 
 ---
 
 ## /mem list
 
-**Direct mode:**
-```bash
-python3 ~/mem.py list --limit 20
+**MCP mode:**
+```sql
+SELECT id, title, project, created_at, updated_at, tags, token_count_est
+FROM claude_memories
+ORDER BY updated_at DESC
+LIMIT 20;
 ```
 
-**HTTP mode:**
+**REST mode:**
 ```bash
-curl -sf "http://$MEM_HOST:7823/list?limit=20"
+python3 ~/mem.py list --limit 20
 ```
 
 Display results as a readable table: date, title, project, tags, word count.
@@ -277,8 +305,10 @@ A good memory lets future Claude:
 
 | Error | Action |
 |---|---|
-| `python3: command not found` | User needs Python 3.8+. Direct them to python.org |
-| `MODE=none` — neither direct nor HTTP works | mem.py (Mac/Linux) or mem_server.py (Windows) is not installed on the user's machine. Provide install commands from Step 0. Remind them: Claude cannot install this — they must run the commands themselves in their own terminal. **Mac/Linux:** `curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py && python3 ~/mem.py setup` **Windows:** `Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem_server.py" -OutFile "$env:USERPROFILE\mem_server.py"` then `Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden` |
-| `Connection refused` on curl | mem_server.py is not running. User must start it: Windows: `Start-Process python -ArgumentList "$env:USERPROFILE\mem_server.py" -WindowStyle Hidden` — Mac/Linux: `python3 ~/mem_server.py &` |
+| `execute_sql` fails with "relation does not exist" | Schema not applied. User must run `schema.sql` in their Supabase SQL Editor |
+| `execute_sql` tool not available | Fall back to REST mode (mem.py) |
+| `ERROR: Config file not found` | User must create `~/.claude_memory_config.json` — see INSTALL.md |
+| `ERROR: requests library not found` | User must run `pip install requests` |
+| Connection timeout or project paused | Check Supabase dashboard — free-tier projects pause after inactivity |
 | `No search results` | Try simpler terms, then `/mem list` to browse all memories |
-| `ERROR: Invalid JSON` | Rebuild the JSON object carefully — check for unescaped quotes or special characters |
+| `ERROR: Invalid JSON` | Rebuild the JSON carefully — check for unescaped quotes in summary text |

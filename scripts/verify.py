@@ -5,14 +5,14 @@ Run: python3 scripts/verify.py
 """
 
 import sys
-import sqlite3
 import subprocess
 from pathlib import Path
 
-PASS = "✅"
-FAIL = "❌"
+PASS = "OK"
+FAIL = "FAIL"
 
 results = []
+
 
 def check(name, fn):
     try:
@@ -24,44 +24,64 @@ def check(name, fn):
     except Exception as e:
         results.append((FAIL, name, str(e)))
 
+
 def check_python_version():
     major, minor = sys.version_info.major, sys.version_info.minor
     if major < 3 or (major == 3 and minor < 8):
         raise Exception(f"Python 3.8+ required, found {major}.{minor}")
     return f"Python {major}.{minor}"
 
-def check_sqlite_fts5():
-    version = sqlite3.sqlite_version
-    db = sqlite3.connect(":memory:")
+
+def check_requests():
     try:
-        db.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
-    except sqlite3.OperationalError:
+        import requests  # noqa: F401
+        import importlib.metadata
+        version = importlib.metadata.version("requests")
+        return f"requests {version}"
+    except ImportError:
         raise Exception(
-            f"SQLite {version} — FTS5 not available in this build. "
-            "Try the Python from python.org or install libsqlite3-dev."
+            "requests not installed. Run: pip install requests"
         )
-    finally:
-        db.close()
-    return f"SQLite {version} with FTS5"
+
 
 def check_mem_py():
     mem_path = Path.home() / "mem.py"
     if not mem_path.exists():
         raise Exception(
             f"mem.py not found at {mem_path}\n"
-            "Install with: cp scripts/mem.py ~/mem.py"
+            "Install with: curl -o ~/mem.py https://raw.githubusercontent.com/ShibanBanerjee/claude-memory-skill/main/mem.py"
         )
     return f"Found at {mem_path}"
 
-def check_database():
+
+def check_config():
+    config_path = Path.home() / ".claude_memory_config.json"
+    if not config_path.exists():
+        raise Exception(
+            f"Config not found at {config_path}\n"
+            'Create it: {"supabase_url": "https://xxx.supabase.co", "supabase_anon_key": "your-key"}'
+        )
+    import json
+    with open(config_path) as f:
+        cfg = json.load(f)
+    for key in ("supabase_url", "supabase_anon_key"):
+        if not cfg.get(key):
+            raise Exception(f"Missing '{key}' in {config_path}")
+    return f"Found at {config_path}"
+
+
+def check_connection():
     result = subprocess.run(
         [sys.executable, str(Path.home() / "mem.py"), "setup"],
-        capture_output=True, text=True, timeout=10
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     if result.returncode != 0:
         raise Exception(result.stderr.strip() or "mem.py setup failed")
     first_line = result.stdout.strip().split("\n")[0]
-    return first_line.replace("✅ ", "")
+    return first_line
+
 
 def check_skill_md():
     candidates = [
@@ -83,19 +103,21 @@ print("claude-memory-skill — Installation Verifier")
 print("=" * 50)
 print()
 
-check("Python version",     check_python_version)
-check("SQLite + FTS5",      check_sqlite_fts5)
-check("mem.py installed",   check_mem_py)
-check("Database ready",     check_database)
-check("SKILL.md installed", check_skill_md)
+check("Python version",        check_python_version)
+check("requests installed",    check_requests)
+check("mem.py installed",      check_mem_py)
+check("Config file",           check_config)
+check("Supabase connection",   check_connection)
+check("SKILL.md installed",    check_skill_md)
 
 print()
 passed = sum(1 for r in results if r[0] == PASS)
 failed = sum(1 for r in results if r[0] == FAIL)
 
 for status, name, detail in results:
+    marker = "[OK]  " if status == PASS else "[FAIL]"
     detail_str = f" — {detail}" if detail else ""
-    print(f"  {status} {name}{detail_str}")
+    print(f"  {marker} {name}{detail_str}")
 
 print()
 print(f"Results: {passed} passed, {failed} failed")

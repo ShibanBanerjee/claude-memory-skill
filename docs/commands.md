@@ -50,18 +50,11 @@ Full-text search across all memory fields — title, project, summary, and tags.
 ```
 More specific queries return more targeted results.
 
-### Project-specific
-```
-/context project:my-project
-/context project:backend
-```
-Returns all memories for a specific project, newest first.
-
 ### Retrieve by ID
 ```
 /context id:e1ccaea5-7cb2-4893-871b-cc83846e5c3e
 ```
-Retrieves a specific memory by its UUID. Use when you know exactly which memory you want.
+Retrieves a specific memory by its UUID.
 
 ---
 
@@ -71,7 +64,7 @@ Retrieves a specific memory by its UUID. Use when you know exactly which memory 
 /recall my-project brainstorm
 /recall product decisions
 ```
-Identical to `/context`. Use whichever feels more natural.
+Identical to `/context`.
 
 ---
 
@@ -86,23 +79,23 @@ Identical to `/context`. Use whichever feels more natural.
 
 ## Loading Multiple Memories
 
-Run `/context` multiple times in the same session to build up a composite context:
+Run `/context` multiple times in the same session to build up composite context:
 
 ```
 /context project strategy
-/context my-project VC preparation
+/context VC preparation
 /context auth design
 ```
 
-Claude will load all three memories and synthesise them into a single working context. It will note the date of each, flag any contradictions, and operate with the full accumulated knowledge of all three sessions.
+Claude loads all three and synthesises them into a single working context, noting the date of each and flagging any contradictions.
 
 ---
 
-## mem.py CLI — Local Machine Usage
+## mem.py CLI Reference
 
-The `mem.py` script provides the same capabilities from your local terminal.
+The `mem.py` script provides the same capabilities from your local terminal, using the Supabase REST API.
 
-### Setup test
+### Setup / connection check
 ```bash
 python3 ~/mem.py setup
 ```
@@ -124,9 +117,14 @@ python3 ~/mem.py list --project "my-project"
 python3 ~/mem.py get --id "e1ccaea5-7cb2-4893-871b-cc83846e5c3e"
 ```
 
-### Store (advanced — normally Claude does this for you)
+### Check if project memory exists
 ```bash
-cat my_memory.json | python3 ~/mem.py store --title "My Memory" --project "MyProject"
+python3 ~/mem.py check --project "my-project"
+```
+
+### Store (advanced — Claude normally does this for you)
+```bash
+echo '{"title": "My Memory", "project": "my-project", "summary": "..."}' | python3 ~/mem.py store
 ```
 
 ---
@@ -134,20 +132,20 @@ cat my_memory.json | python3 ~/mem.py store --title "My Memory" --project "MyPro
 ## Tips
 
 **Checkpoint regularly in long sessions**
-In a 2-hour brainstorm, run `/mem` every 30–45 minutes. Each `/mem` updates the existing memory for the project — so you always have one clean, comprehensive snapshot, not scattered fragments. If the session ends unexpectedly, nothing is lost.
+In a 2-hour brainstorm, run `/mem` every 30–45 minutes. Each run updates the existing memory for the project — so you always have one clean, comprehensive snapshot.
 
 **Start fresh when the context window gets heavy**
-After running `/mem`, start a new conversation and type `/context [project]`. Claude restores from a dense 3,000–4,000 word summary instead of a bloated 50,000+ word raw transcript. Much better use of the context window.
+After running `/mem`, start a new conversation and type `/context [project]`. Claude restores from a dense 3,000–4,000 word summary instead of a bloated raw transcript.
 
 **Be specific with titles**
-`/mem` → "Conversation 2026-05-05" (hard to find later)  
+`/mem` → "Conversation 2026-05-05" (hard to find later)
 `/mem My Project VC prep — monetisation model and objection handling` → immediately findable
 
 **Use `/context` before starting any continuation session**
-Don't try to paste context manually. Just type `/context [project]` and let Claude restore everything.
+Don't try to paste context manually. Type `/context [project]` and let Claude restore everything.
 
 **Search is flexible**
-`/context auth` finds memories tagged "auth" OR containing "auth" in the title or summary. You don't need to be exact.
+`/context auth` finds memories tagged "auth" OR containing "auth" in the title or summary.
 
 **Check what's stored before a big session**
-`/mem list` at the start of a session gives you a map of what's already in memory before you dive in.
+`/mem list` at the start of a session gives you a map of what's already saved.

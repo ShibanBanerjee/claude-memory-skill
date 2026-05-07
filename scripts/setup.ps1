@@ -10,7 +10,7 @@ Write-Host "╚═════════════════════�
 Write-Host ""
 
 # 1. Check Python
-Write-Host "[1/3] Checking Python..." -ForegroundColor Yellow
+Write-Host "[1/4] Checking Python..." -ForegroundColor Yellow
 try {
     $pythonVersion = python --version 2>&1
     Write-Host "✓ Found: $pythonVersion" -ForegroundColor Green
@@ -19,33 +19,53 @@ try {
     exit 1
 }
 
-# 2. Install mem.py
-Write-Host "[2/3] Installing mem.py..." -ForegroundColor Yellow
+# 2. Check / install requests
+Write-Host "[2/4] Checking requests library..." -ForegroundColor Yellow
+$requestsCheck = python -c "import requests; print('ok')" 2>&1
+if ($requestsCheck -eq "ok") {
+    Write-Host "✓ requests already installed" -ForegroundColor Green
+} else {
+    Write-Host "Installing requests..."
+    pip install requests
+    Write-Host "✓ requests installed" -ForegroundColor Green
+}
+
+# 3. Install mem.py
+Write-Host "[3/4] Installing mem.py..." -ForegroundColor Yellow
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $memSrc = Join-Path $scriptDir "mem.py"
 if (-not (Test-Path $memSrc)) {
     $memSrc = Join-Path (Split-Path -Parent $scriptDir) "mem.py"
 }
 Copy-Item -Path $memSrc -Destination "$env:USERPROFILE\mem.py" -Force
-python "$env:USERPROFILE\mem.py" setup
-Write-Host "✓ mem.py installed and database initialised" -ForegroundColor Green
+Write-Host "✓ mem.py installed to $env:USERPROFILE\mem.py" -ForegroundColor Green
 
-# 3. Install SKILL.md
-Write-Host "[3/3] Installing Claude skill..." -ForegroundColor Yellow
-$skillDir = "$env:USERPROFILE\.claude\skills\claude-memory"
-New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
-$skillSrc = Join-Path (Split-Path -Parent $scriptDir) "SKILL.md"
-if (-not (Test-Path $skillSrc)) { $skillSrc = "SKILL.md" }
-Copy-Item -Path $skillSrc -Destination "$skillDir\SKILL.md" -Force
-Write-Host "✓ SKILL.md installed to $skillDir" -ForegroundColor Green
+# 4. Check credentials and test connection
+Write-Host "[4/4] Checking Supabase credentials..." -ForegroundColor Yellow
+$configPath = "$env:USERPROFILE\.claude_memory_config.json"
+if (-not (Test-Path $configPath)) {
+    Write-Host ""
+    Write-Host "  $configPath not found."
+    Write-Host "  Create it with your Supabase project credentials:"
+    Write-Host ""
+    Write-Host '  {"supabase_url": "https://your-project.supabase.co", "supabase_anon_key": "your-anon-key"}'
+    Write-Host ""
+    Write-Host "  Your URL and anon key are at: Supabase Dashboard -> Project Settings -> API"
+    Write-Host ""
+    Write-Host "  Skipping connection test — create the config file and run: python `"$env:USERPROFILE\mem.py`" setup" -ForegroundColor Yellow
+} else {
+    python "$env:USERPROFILE\mem.py" setup
+    Write-Host "✓ Supabase connection verified" -ForegroundColor Green
+}
 
 Write-Host ""
 Write-Host "════════════════════════════════════════" -ForegroundColor Blue
 Write-Host ""
-Write-Host "Setup complete. In any Claude conversation, type:"
+Write-Host "Next step: install the skill in Claude"
 Write-Host ""
-Write-Host "  /mem      → save conversation to memory"
-Write-Host "  /context  → restore memory in future sessions"
+Write-Host "  Claude Desktop: Settings -> Skills -> Add Custom Skill -> upload SKILL.md"
 Write-Host ""
-Write-Host "No further configuration required." -ForegroundColor Green
+Write-Host "Then in any Claude conversation, type:"
+Write-Host "  /mem      -> save conversation to memory"
+Write-Host "  /context  -> restore memory in future sessions"
 Write-Host ""

@@ -7,6 +7,9 @@ build/
 .venv/
 venv/
 
+# Credentials — never commit Supabase keys
+.claude_memory_config.json
+
 # OS
 .DS_Store
 Thumbs.db

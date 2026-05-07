@@ -6,16 +6,16 @@ After a successful /context retrieval, Claude must:
 
 1. Show the user a clear confirmation of what was loaded
 2. Immediately USE the context — treat all fields as fully known
-3. Not re-ask for information already in the memory
+3. Not re-ask for information already in the summary
 4. Resume from where the open_questions left off
-5. Apply any instructions[] found in the memory
+5. Apply any instructions captured inside the summary
 
 ## Confirmation Format
 
 ```
 Memory loaded: "[title]"
 Saved: [date] | Project: [project] | Words: ~[N]
-[N] decisions locked | [N] open questions | [N] instructions
+[N] decisions locked | [N] open questions
 
 Context restored. [One sentence summary of where things stand.]
 [If open questions exist: "Next step was: [first open question]"]

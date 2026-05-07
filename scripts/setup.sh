@@ -17,7 +17,7 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 
 # 1. Check Python
-echo -e "${YELLOW}[1/3] Checking Python...${NC}"
+echo -e "${YELLOW}[1/4] Checking Python...${NC}"
 if command -v python3 &>/dev/null; then
     PYTHON_VERSION=$(python3 --version 2>&1)
     echo -e "${GREEN}✓ Found: $PYTHON_VERSION${NC}"
@@ -26,33 +26,61 @@ else
     exit 1
 fi
 
-# 2. Install mem.py
-echo -e "${YELLOW}[2/3] Installing mem.py...${NC}"
+# 2. Check / install requests
+echo -e "${YELLOW}[2/4] Checking requests library...${NC}"
+if python3 -c "import requests" 2>/dev/null; then
+    echo -e "${GREEN}✓ requests already installed${NC}"
+else
+    echo "Installing requests..."
+    pip install requests
+    echo -e "${GREEN}✓ requests installed${NC}"
+fi
+
+# 3. Install mem.py
+echo -e "${YELLOW}[3/4] Installing mem.py...${NC}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MEM_SRC="$SCRIPT_DIR/mem.py"
 [ -f "$MEM_SRC" ] || MEM_SRC="$SCRIPT_DIR/../mem.py"
 [ -f "$MEM_SRC" ] || MEM_SRC="mem.py"
 cp "$MEM_SRC" ~/mem.py
 chmod +x ~/mem.py
-python3 ~/mem.py setup
-echo -e "${GREEN}✓ mem.py installed and database initialised${NC}"
+echo -e "${GREEN}✓ mem.py installed to ~/mem.py${NC}"
 
-# 3. Install SKILL.md
-echo -e "${YELLOW}[3/3] Installing Claude skill...${NC}"
-SKILL_DIR="$HOME/.claude/skills/claude-memory"
-mkdir -p "$SKILL_DIR"
-SKILL_SRC="$SCRIPT_DIR/../SKILL.md"
-[ -f "$SKILL_SRC" ] || SKILL_SRC="SKILL.md"
-cp "$SKILL_SRC" "$SKILL_DIR/SKILL.md"
-echo -e "${GREEN}✓ SKILL.md installed to $SKILL_DIR${NC}"
+# 4. Check credentials and test connection
+echo -e "${YELLOW}[4/4] Checking Supabase credentials...${NC}"
+CONFIG="$HOME/.claude_memory_config.json"
+if [ ! -f "$CONFIG" ]; then
+    echo ""
+    echo "  ~/.claude_memory_config.json not found."
+    echo "  Create it with your Supabase project credentials:"
+    echo ""
+    echo '  {
+    "supabase_url": "https://your-project.supabase.co",
+    "supabase_anon_key": "your-anon-key"
+  }'
+    echo ""
+    echo "  Your URL and anon key are at: Supabase Dashboard → Project Settings → API"
+    echo ""
+    echo -e "${YELLOW}  Skipping connection test — create the config file and run: python3 ~/mem.py setup${NC}"
+else
+    python3 ~/mem.py setup
+    echo -e "${GREEN}✓ Supabase connection verified${NC}"
+fi
 
 echo ""
 echo -e "${BLUE}════════════════════════════════════════${NC}"
 echo ""
-echo "Setup complete. In any Claude conversation, type:"
+echo "Next step: install the skill in Claude"
 echo ""
+echo "  Claude Desktop / Claude.ai:"
+echo "    Settings → Skills → Add Custom Skill → upload SKILL.md"
+echo ""
+echo "  Claude Code:"
+SKILL_SRC="$SCRIPT_DIR/../SKILL.md"
+echo "    mkdir -p ~/.claude/skills/claude-memory"
+echo "    cp $SKILL_SRC ~/.claude/skills/claude-memory/SKILL.md"
+echo ""
+echo "Then in any Claude conversation, type:"
 echo "  /mem      → save conversation to memory"
 echo "  /context  → restore memory in future sessions"
-echo ""
-echo -e "${GREEN}No further configuration required.${NC}"
 echo ""

@@ -44,27 +44,27 @@ A few hundred extra words costs nothing. A lost decision costs everything.
           vs coupling need to be resolved before the service boundary is final"
 **Bad:** "Decide on temples"
 
-### instructions (JSONB array of strings)
-Capture anything the user told Claude to always/never do.
-Examples:
-- "Always format responses in markdown suitable for Word/Google Docs"
-- "Default to 9:16 vertical format for all video prompts"
-- "Never suggest tokenisation as a creator incentive model"
-
 ### entities (JSONB object)
 ```json
 {
   "people":    ["Full name (role)"],
   "products":  ["Product names"],
   "companies": ["Company names"],
-  "frameworks": ["JTBD", "Hooked Model", etc],
+  "frameworks": ["JTBD", "Hooked Model"],
   "documents": ["Filename.docx"],
   "tools":     ["Tool names"],
   "concepts":  ["Key concepts coined in this conversation"]
 }
 ```
 
-### tags (TEXT array)
+### tags (TEXT[])
 5–12 lowercase hyphenated strings.
 Include: project-name, domain, key-concepts, framework-names, app-names.
 These are the words someone will search months later.
+
+Stored as a PostgreSQL native array with a GIN index — searchable via `'tag' = ANY(tags)` in SQL or `tags=cs.{tag}` in PostgREST.
+
+### token_count_est (INTEGER)
+Word count of the summary field, used as a rough proxy for token count.
+Set automatically by mem.py using `len(summary.split())`.
+Claude sets this to the actual word count when using MCP mode.

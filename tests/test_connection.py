@@ -1,43 +1,70 @@
 #!/usr/bin/env python3
-"""Test SQLite database connectivity and FTS5 availability."""
+"""Test Supabase database connectivity."""
 import sys
-import sqlite3
+import json
 from pathlib import Path
 
-DB_PATH = Path.home() / ".claude_memory.db"
+CONFIG_PATH = Path.home() / ".claude_memory_config.json"
+
 
 def test_connection():
-    # Verify FTS5 is available
-    try:
-        db = sqlite3.connect(":memory:")
-        db.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
-        db.close()
-    except sqlite3.OperationalError:
-        print(f"FAIL: SQLite FTS5 not available (SQLite {sqlite3.sqlite_version})")
+    # Check config file
+    if not CONFIG_PATH.exists():
+        print(f"FAIL: Config file not found at {CONFIG_PATH}")
+        print("      Create it with: {\"supabase_url\": \"...\", \"supabase_anon_key\": \"...\"}")
         return False
 
-    # Connect to the real database and ensure schema exists
     try:
-        db = sqlite3.connect(DB_PATH)
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS claude_memories (
-                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                title TEXT NOT NULL, project TEXT NOT NULL DEFAULT '',
-                conversation_url TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL,
-                key_decisions TEXT NOT NULL DEFAULT '[]', open_questions TEXT NOT NULL DEFAULT '[]',
-                entities TEXT NOT NULL DEFAULT '{}', tags TEXT NOT NULL DEFAULT '[]',
-                token_count_est INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-        db.commit()
-        count = db.execute("SELECT COUNT(*) FROM claude_memories").fetchone()[0]
-        db.close()
-        print(f"PASS: Connected to {DB_PATH} — {count} memories stored (SQLite {sqlite3.sqlite_version} + FTS5)")
-        return True
-    except Exception as e:
-        print(f"FAIL: {e}")
+        with open(CONFIG_PATH, "r") as f:
+            cfg = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"FAIL: Config file is not valid JSON: {e}")
         return False
+
+    for key in ("supabase_url", "supabase_anon_key"):
+        if not cfg.get(key):
+            print(f"FAIL: Missing '{key}' in config file")
+            return False
+
+    # Check requests
+    try:
+        import requests
+    except ImportError:
+        print("FAIL: requests library not installed. Run: pip install requests")
+        return False
+
+    # Connect to Supabase
+    url = f"{cfg['supabase_url'].rstrip('/')}/rest/v1/claude_memories"
+    headers = {
+        "apikey": cfg["supabase_anon_key"],
+        "Authorization": f"Bearer {cfg['supabase_anon_key']}",
+        "Prefer": "count=exact",
+    }
+
+    try:
+        r = requests.get(url, headers=headers, params={"select": "id", "limit": 0}, timeout=10)
+    except requests.exceptions.ConnectionError as e:
+        print(f"FAIL: Could not connect to Supabase: {e}")
+        return False
+    except requests.exceptions.Timeout:
+        print("FAIL: Connection timed out — check if the Supabase project is active (not paused)")
+        return False
+
+    if r.status_code == 404:
+        print("FAIL: Table 'claude_memories' not found — run schema.sql in your Supabase SQL Editor")
+        return False
+    if r.status_code == 401:
+        print("FAIL: Unauthorized — check your supabase_anon_key in the config file")
+        return False
+    if r.status_code >= 400:
+        print(f"FAIL: Supabase returned {r.status_code}: {r.text}")
+        return False
+
+    count_header = r.headers.get("Content-Range", "*/0")
+    total = count_header.split("/")[-1] if "/" in count_header else "?"
+    print(f"PASS: Connected to {cfg['supabase_url']} — {total} memories stored")
+    return True
+
 
 if __name__ == "__main__":
     sys.exit(0 if test_connection() else 1)

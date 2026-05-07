@@ -26,7 +26,7 @@ jobs:
 
       - name: Check required files exist
         run: |
-          files=("scripts/schema.sql" "scripts/mem.py" "README.md" "LICENSE" "CHANGELOG.md")
+          files=("schema.sql" "scripts/schema.sql" "scripts/mem.py" "README.md" "LICENSE" "CHANGELOG.md" "INSTALL.md")
           for f in "${files[@]}"; do
             if [ ! -f "$f" ]; then
               echo "ERROR: Required file missing: $f"
@@ -35,25 +35,38 @@ jobs:
           done
           echo "All required files present"
 
+      - name: Install Python dependencies
+        run: pip install requests
+
       - name: Validate Python syntax
         run: |
+          python3 -m py_compile mem.py
           python3 -m py_compile scripts/mem.py
           python3 -m py_compile scripts/verify.py
+          python3 -m py_compile tests/test_connection.py
+          python3 -m py_compile tests/test_storage.py
+          python3 -m py_compile tests/test_search.py
           echo "Python syntax OK"
 
-      - name: Validate no external dependencies in mem.py
+      - name: Validate mem.py imports requests
         run: |
-          if grep -qE "^import requests|^from requests" scripts/mem.py; then
-            echo "ERROR: mem.py must not import requests — use stdlib only"
+          if ! grep -q "import requests" scripts/mem.py; then
+            echo "ERROR: mem.py must import requests for Supabase REST access"
             exit 1
           fi
-          echo "No external dependencies detected"
+          echo "requests import verified"
 
-      - name: Run test suite
+      - name: Validate schema.sql is PostgreSQL
         run: |
-          cp scripts/mem.py ~/mem.py
-          python3 ~/mem.py setup
-          python3 tests/run_all_tests.py
+          if grep -q "PRAGMA\|fts5\|sqlite" schema.sql; then
+            echo "ERROR: schema.sql appears to contain SQLite syntax, not PostgreSQL"
+            exit 1
+          fi
+          if ! grep -q "gen_random_uuid\|TIMESTAMPTZ\|TSVECTOR" schema.sql; then
+            echo "ERROR: schema.sql missing expected PostgreSQL constructs"
+            exit 1
+          fi
+          echo "schema.sql PostgreSQL validation passed"
 
       - name: Check SKILL.md size
         run: |
